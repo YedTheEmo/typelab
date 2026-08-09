@@ -1,302 +1,232 @@
 # Vulkan synchronization - typing
 
-This lesson adds synchronization to the command submission model.
-
-The example creates a fence and two semaphores. The fence allows the CPU to
-wait for GPU work to finish. The semaphores connect image acquisition,
-rendering, and presentation without forcing the CPU to wait between them.
-
-The swapchain and command buffer are assumed to come from the previous lessons.
+This lesson types GPU and CPU synchronization: a fence, two semaphores, and
+the acquire-render-present chain they wire together.
 
 ## Create synchronization objects
 
-Create a fence first:
+A fence tracks CPU-visible completion; semaphores track GPU-side order.
 
 ```
+// the create-info struct for the fence
 VkFenceCreateInfo fenceInfo{};
+// identify the fence create-info type
 fenceInfo.sType =
     VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 
+// handle that Vulkan will fill in
 VkFence inFlightFence = VK_NULL_HANDLE;
 
+// create the fence (starts unsignaled)
 VkResult result = vkCreateFence(
     device,
     &fenceInfo,
     nullptr,
     &inFlightFence);
 
+// bail out if fence creation failed
 if (result != VK_SUCCESS)
     return 1;
-```
 
-The fence starts unsignaled.
-
-Now create a semaphore for image acquisition:
-
-```
+// the create-info struct for a semaphore
 VkSemaphoreCreateInfo semaphoreInfo{};
+// identify the semaphore create-info type
 semaphoreInfo.sType =
     VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
+// signals when the swapchain image is ready
 VkSemaphore imageAvailable = VK_NULL_HANDLE;
 
+// create the first semaphore
 result = vkCreateSemaphore(
     device,
     &semaphoreInfo,
     nullptr,
     &imageAvailable);
 
+// bail out if semaphore creation failed
 if (result != VK_SUCCESS)
     return 1;
-```
 
-Create another semaphore for finished rendering:
-
-```
+// signals when rendering has finished
 VkSemaphore renderFinished = VK_NULL_HANDLE;
 
+// create the second semaphore
 result = vkCreateSemaphore(
     device,
     &semaphoreInfo,
     nullptr,
     &renderFinished);
 
+// bail out if semaphore creation failed
 if (result != VK_SUCCESS)
     return 1;
 ```
 
-The two semaphores represent two different points in the frame.
-
 ## Wait for the previous frame
 
-Before reusing resources associated with the previous submission, wait for
-the GPU to finish it:
+Wait before reusing resources tied to the prior submission.
 
 ```
+// block the CPU until the fence is signaled
 vkWaitForFences(
     device,
     1,
     &inFlightFence,
-    VK_TRUE,
-    UINT64_MAX);
-```
+    VK_TRUE,      // wait for all listed fences
+    UINT64_MAX);  // wait forever
 
-The CPU now knows that the previous GPU submission using this fence has
-completed.
-
-Reset the fence before submitting the next frame:
-
-```
+// prepare the fence for the next submission
 vkResetFences(
     device,
     1,
     &inFlightFence);
 ```
 
-The next submission can now signal this fence.
-
 ## Acquire a swapchain image
 
-Acquire an available swapchain image and request that Vulkan signal
-imageAvailable when the image is ready:
+The semaphore is signaled by the GPU when the image is ready.
 
 ```
+// index of the image handed to us
 uint32_t imageIndex = 0;
 
+// acquire an image and signal imageAvailable when ready
 result = vkAcquireNextImageKHR(
     device,
     swapchain,
-    UINT64_MAX,
+    UINT64_MAX,   // wait forever for an image
     imageAvailable,
     VK_NULL_HANDLE,
     &imageIndex);
 ```
 
-The CPU receives the image index, but the semaphore represents the GPU-side
-dependency.
-
-The important relationship is:
-
-```
-acquire image
-      |
-      v
-imageAvailable
-      |
-      v
-graphics submission
-```
-
 ## Describe the wait
 
-The graphics submission should wait for imageAvailable before reaching the
-color attachment stage.
+The submission must wait for the image before drawing into it.
 
 ```
+// only the color attachment stage needs to wait
 VkPipelineStageFlags waitStage =
     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-```
 
-Describe the wait in VkSubmitInfo:
-
-```
+// the create-info struct for the submission
 VkSubmitInfo submitInfo{};
+// identify the submit-info type
 submitInfo.sType =
     VK_STRUCTURE_TYPE_SUBMIT_INFO;
+// wait on one semaphore
 submitInfo.waitSemaphoreCount = 1;
+// the semaphore to wait on
 submitInfo.pWaitSemaphores = &imageAvailable;
+// the stage that must wait
 submitInfo.pWaitDstStageMask = &waitStage;
-```
 
-The command buffer is part of the same submission:
-
-```
+// submit one command buffer
 submitInfo.commandBufferCount = 1;
+// pointer to the recorded buffer
 submitInfo.pCommandBuffers = &commandBuffer;
 ```
 
-The submission will therefore wait for the acquired image before reaching the
-specified pipeline stage.
-
 ## Signal when rendering finishes
 
-The graphics submission should signal renderFinished when its work completes:
+The same submission signals renderFinished when its work completes.
 
 ```
+// signal one semaphore when done
 submitInfo.signalSemaphoreCount = 1;
+// the semaphore to signal
 submitInfo.pSignalSemaphores = &renderFinished;
-```
 
-Submit the work and associate the fence with it:
-
-```
+// submit and associate the fence with this work
 result = vkQueueSubmit(
     graphicsQueue,
     1,
     &submitInfo,
     inFlightFence);
 
+// bail out if the submission failed
 if (result != VK_SUCCESS)
     return 1;
 ```
 
-There are now two different synchronization paths.
-
-The semaphore tells later GPU work that rendering has finished.
-
-The fence tells the CPU that this submission has finished.
-
 ## Present the image
 
-The presentation operation should wait for renderFinished:
+Presentation waits for renderFinished before showing the image.
 
 ```
+// the create-info struct for presentation
 VkPresentInfoKHR presentInfo{};
+// identify the present-info type
 presentInfo.sType =
     VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+// wait for rendering before presenting
 presentInfo.waitSemaphoreCount = 1;
+// the semaphore that says rendering is done
 presentInfo.pWaitSemaphores = &renderFinished;
+// present to one swapchain
 presentInfo.swapchainCount = 1;
+// the swapchain to present to
 presentInfo.pSwapchains = &swapchain;
+// which image to present
 presentInfo.pImageIndices = &imageIndex;
-```
 
-Submit the presentation request:
-
-```
+// request the presentation
 vkQueuePresentKHR(
     presentQueue,
     &presentInfo);
 ```
 
-The frame now follows the complete synchronization chain:
-
-```
-acquire
-   |
-   v
-imageAvailable
-   |
-   v
-render
-   |
-   v
-renderFinished
-   |
-   v
-present
-```
-
-Meanwhile, the fence provides a separate CPU-side completion signal:
-
-```
-render
-   |
-   v
-inFlightFence
-   |
-   v
-CPU
-```
-
 ## Reuse the fence
 
-The next frame begins by waiting for the previous submission:
+Each frame starts by waiting for and resetting the same fence.
 
 ```
+// block until the previous submission completes
 vkWaitForFences(
     device,
     1,
     &inFlightFence,
     VK_TRUE,
     UINT64_MAX);
-```
 
-Then reset it:
-
-```
+// prepare the fence for the next submission
 vkResetFences(
     device,
     1,
     &inFlightFence);
 ```
 
-This makes the same fence usable for another submission.
-
-Real renderers usually keep several sets of synchronization objects so that
-multiple frames can be in flight simultaneously.
-
 ## Clean up
 
 Synchronization objects belong to the logical device.
 
-Destroy them before destroying the device:
-
 ```
+// destroy the image-available semaphore
 vkDestroySemaphore(
     device,
     imageAvailable,
     nullptr);
 
+// destroy the render-finished semaphore
 vkDestroySemaphore(
     device,
     renderFinished,
     nullptr);
 
+// destroy the fence
 vkDestroyFence(
     device,
     inFlightFence,
     nullptr);
 ```
 
-The command buffers, swapchain, surface, and other Vulkan objects have their
-own lifetimes and are cleaned up separately.
-
 ## Now type it again
 
-Type the essential CPU-side synchronization:
+Type the CPU-side wait and reset first.
 
 ```
+// block until the previous submission completes
 vkWaitForFences(
     device,
     1,
@@ -304,27 +234,34 @@ vkWaitForFences(
     VK_TRUE,
     UINT64_MAX);
 
+// prepare the fence for the next submission
 vkResetFences(
     device,
     1,
     &inFlightFence);
 ```
 
-Then type the GPU-side wait:
+Then type the GPU-side wait.
 
 ```
+// only the color attachment stage needs to wait
 VkPipelineStageFlags waitStage =
     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
+// wait on one semaphore
 submitInfo.waitSemaphoreCount = 1;
+// the semaphore to wait on
 submitInfo.pWaitSemaphores = &imageAvailable;
+// the stage that must wait
 submitInfo.pWaitDstStageMask = &waitStage;
 ```
 
-Finally, type the signal:
+Finally, type the signal.
 
 ```
+// signal one semaphore when done
 submitInfo.signalSemaphoreCount = 1;
+// the semaphore to signal
 submitInfo.pSignalSemaphores = &renderFinished;
 ```
 
@@ -332,4 +269,3 @@ submitInfo.pSignalSemaphores = &renderFinished;
 
 The flow: acquire -> wait semaphore -> render -> signal semaphore -> present.
 The fence separately tells the CPU when the submitted GPU work is finished.
-

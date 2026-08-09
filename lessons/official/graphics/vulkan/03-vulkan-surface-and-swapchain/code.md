@@ -1,43 +1,40 @@
 # Vulkan surface and swapchain - typing
 
-This lesson connects Vulkan to a real window and creates a swapchain for that
-window.
-
-The example uses GLFW to create the window and Vulkan surface. The Vulkan code
-then queries the surface, chooses compatible properties, creates the swapchain,
-retrieves its images, and finally cleans everything up.
-
-The rendering commands will come in later lessons.
+This lesson types the window connection: create a window with GLFW, make a
+Vulkan surface, choose swapchain settings, and retrieve the swapchain images.
 
 ## Create the window
 
-GLFW creates the operating-system window. Vulkan is responsible for everything
-after the surface is created.
+GLFW creates the operating-system window for Vulkan to draw into.
 
 ```
+// let GLFW pull in the Vulkan headers for us
 #define GLFW_INCLUDE_VULKAN
+// GLFW windowing API
 #include <GLFW/glfw3.h>
-
+// Vulkan API types and functions
 #include <vulkan/vulkan.h>
-
+// printing device properties and errors
 #include <iostream>
+// dynamic arrays for formats and modes
 #include <vector>
+// exceptions for fatal errors
 #include <stdexcept>
+// numeric limits for timeout values
 #include <limits>
-```
 
-Start GLFW and create a window:
-
-```
 int main()
 {
+    // start the GLFW library
     if (!glfwInit())
         return 1;
 
+    // tell GLFW we will use Vulkan, not OpenGL
     glfwWindowHint(
         GLFW_CLIENT_API,
         GLFW_NO_API);
 
+    // create a 1280x720 window titled TypeLab Vulkan
     GLFWwindow* window = glfwCreateWindow(
         1280,
         720,
@@ -45,104 +42,91 @@ int main()
         nullptr,
         nullptr);
 
+    // bail out if the window could not be created
     if (!window)
         return 1;
 
+    // clean up GLFW resources
     glfwTerminate();
     return 0;
 }
 ```
 
-GLFW_NO_API tells GLFW that Vulkan, rather than OpenGL, will provide the
-graphics API.
-
 ## Create the surface
 
-A Vulkan instance must already exist before the surface can be created.
-
-Assume the instance from the previous lessons exists:
+The window needs a platform-specific surface before it can host Vulkan images.
 
 ```
+// an instance must already exist before this step
 VkInstance instance = VK_NULL_HANDLE;
-```
 
-GLFW can create the platform-specific Vulkan surface:
-
-```
+// handle that will refer to the surface
 VkSurfaceKHR surface = VK_NULL_HANDLE;
 
+// ask GLFW to create the Vulkan surface for the window
 if (glfwCreateWindowSurface(
     instance,
     window,
     nullptr,
     &surface) != VK_SUCCESS)
 {
+    // fail loudly if the surface could not be created
     throw std::runtime_error(
         "failed to create window surface");
 }
 ```
 
-The application now has a Vulkan surface associated with its window.
-
 ## Check presentation support
 
-A graphics queue is not automatically a presentation queue.
-
-Ask Vulkan whether the selected queue family supports this surface:
+The queue family must also support presenting to this surface.
 
 ```
+// selected physical device from the previous lesson
 VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+// index of the graphics queue family
 uint32_t graphicsFamily = 0;
 
+// flag that Vulkan will set
 VkBool32 presentSupported = VK_FALSE;
 
+// ask whether this family can present to the surface
 vkGetPhysicalDeviceSurfaceSupportKHR(
     physicalDevice,
     graphicsFamily,
     surface,
     &presentSupported);
-```
 
-For this lesson, require that the graphics queue also supports presentation:
-
-```
+// require that the graphics queue can also present
 if (!presentSupported)
     throw std::runtime_error(
         "graphics queue cannot present");
 ```
-
-A complete renderer may choose separate graphics and presentation queue
-families. Keeping them together makes the first swapchain example easier to
-follow.
 
 ## Query surface capabilities
 
 The surface determines which swapchain configurations are legal.
 
 ```
+// struct that Vulkan will fill with surface limits
 VkSurfaceCapabilitiesKHR capabilities{};
 
+// retrieve the surface's capabilities
 vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
     physicalDevice,
     surface,
     &capabilities);
-```
 
-The current window size can be obtained from GLFW:
-
-```
+// framebuffer size reported by GLFW
 int width = 0;
 int height = 0;
 
+// read the current framebuffer size
 glfwGetFramebufferSize(
     window,
     &width,
     &height);
-```
 
-Use that size for the swapchain extent:
-
-```
+// build the swapchain extent from the framebuffer size
 VkExtent2D extent{
     static_cast<uint32_t>(width),
     static_cast<uint32_t>(height)
@@ -151,78 +135,73 @@ VkExtent2D extent{
 
 ## Choose a surface format
 
-Ask Vulkan which image formats the surface supports:
+The surface supports a set of image formats.
 
 ```
+// variable that will hold the format count
 uint32_t formatCount = 0;
 
+// first call asks how many formats are supported
 vkGetPhysicalDeviceSurfaceFormatsKHR(
     physicalDevice,
     surface,
     &formatCount,
     nullptr);
 
+// storage for that many formats
 std::vector<VkSurfaceFormatKHR> formats(formatCount);
 
+// second call fills the vector with the formats
 vkGetPhysicalDeviceSurfaceFormatsKHR(
     physicalDevice,
     surface,
     &formatCount,
     formats.data());
-```
 
-For this introductory example, use the first supported format:
-
-```
+// use the first supported format for this lesson
 VkSurfaceFormatKHR surfaceFormat = formats[0];
 ```
 
-A real renderer would inspect the available formats and choose one deliberately.
-
 ## Choose a present mode
 
-Query the available present modes:
+The present mode controls how completed images reach the screen.
 
 ```
+// variable that will hold the mode count
 uint32_t presentModeCount = 0;
 
+// first call asks how many present modes exist
 vkGetPhysicalDeviceSurfacePresentModesKHR(
     physicalDevice,
     surface,
     &presentModeCount,
     nullptr);
 
+// storage for that many modes
 std::vector<VkPresentModeKHR> presentModes(
     presentModeCount);
 
+// second call fills the vector with the modes
 vkGetPhysicalDeviceSurfacePresentModesKHR(
     physicalDevice,
     surface,
     &presentModeCount,
     presentModes.data());
-```
 
-FIFO is guaranteed by Vulkan, making it a useful default:
-
-```
+// FIFO is guaranteed to exist on every Vulkan device
 VkPresentModeKHR presentMode =
     VK_PRESENT_MODE_FIFO_KHR;
 ```
 
-The present mode determines how completed swapchain images are handed to the
-presentation system.
-
 ## Choose the image count
 
-Start with the surface's recommended minimum:
+More images let rendering and presentation overlap.
 
 ```
+// start one above the minimum the surface recommends
 uint32_t imageCount = capabilities.minImageCount + 1;
-```
 
-Do not exceed the surface's maximum when one is specified:
-
-```
+// clamp to the maximum when the surface specifies one
 if (capabilities.maxImageCount > 0 &&
     imageCount > capabilities.maxImageCount)
 {
@@ -230,75 +209,84 @@ if (capabilities.maxImageCount > 0 &&
 }
 ```
 
-Having multiple images allows rendering and presentation to overlap.
-
 ## Create the swapchain
 
-Describe the complete swapchain configuration:
+The swapchain create-info bundles every choice made above.
 
 ```
+// the create-info struct for the swapchain
 VkSwapchainCreateInfoKHR swapchainInfo{};
-
+// identify the swapchain create-info type
 swapchainInfo.sType =
     VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+// the surface the swapchain presents to
 swapchainInfo.surface = surface;
+// the number of images requested
 swapchainInfo.minImageCount = imageCount;
+// image pixel format chosen above
 swapchainInfo.imageFormat = surfaceFormat.format;
+// image color space chosen above
 swapchainInfo.imageColorSpace =
     surfaceFormat.colorSpace;
+// the swapchain image dimensions
 swapchainInfo.imageExtent = extent;
+// one layer per image
 swapchainInfo.imageArrayLayers = 1;
+// images will be used as color render targets
 swapchainInfo.imageUsage =
     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+// images are not shared across queue families
 swapchainInfo.imageSharingMode =
     VK_SHARING_MODE_EXCLUSIVE;
+// keep the surface's current transform
 swapchainInfo.preTransform =
     capabilities.currentTransform;
+// the image is opaque
 swapchainInfo.compositeAlpha =
     VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+// the present mode chosen above
 swapchainInfo.presentMode = presentMode;
+// hidden pixels may be discarded
 swapchainInfo.clipped = VK_TRUE;
-```
 
-Create the swapchain using the logical device:
-
-```
+// the logical device from the previous lesson
 VkDevice device = VK_NULL_HANDLE;
+// handle that Vulkan will fill in
 VkSwapchainKHR swapchain = VK_NULL_HANDLE;
 
+// create the swapchain on the logical device
 if (vkCreateSwapchainKHR(
     device,
     &swapchainInfo,
     nullptr,
     &swapchain) != VK_SUCCESS)
 {
+    // fail loudly if the swapchain could not be created
     throw std::runtime_error(
         "failed to create swapchain");
 }
 ```
 
-The swapchain now exists, but the application still needs its images.
-
 ## Retrieve the swapchain images
 
-First ask how many images the swapchain contains:
+The swapchain owns images that the application can acquire.
 
 ```
+// variable that will hold the image count
 uint32_t swapchainImageCount = 0;
 
+// first call asks how many images the swapchain has
 vkGetSwapchainImagesKHR(
     device,
     swapchain,
     &swapchainImageCount,
     nullptr);
-```
 
-Allocate storage and retrieve them:
-
-```
+// storage for that many image handles
 std::vector<VkImage> swapchainImages(
     swapchainImageCount);
 
+// second call fills the vector with the image handles
 vkGetSwapchainImagesKHR(
     device,
     swapchain,
@@ -306,16 +294,15 @@ vkGetSwapchainImagesKHR(
     swapchainImages.data());
 ```
 
-These VkImage handles represent the actual images that can be acquired and
-presented through the swapchain.
-
 ## Acquire an image
 
-Before rendering, acquire an available image:
+Before rendering, the application grabs an available image.
 
 ```
+// index of the image handed to us
 uint32_t imageIndex = 0;
 
+// acquire an available image (no semaphores yet)
 VkResult result = vkAcquireNextImageKHR(
     device,
     swapchain,
@@ -325,70 +312,60 @@ VkResult result = vkAcquireNextImageKHR(
     &imageIndex);
 ```
 
-The returned imageIndex identifies the swapchain image that the application
-should use for the next frame.
-
-The synchronization objects normally passed here will be introduced in the
-next lesson.
-
 ## Clean up
 
-The swapchain depends on the device, and the surface depends on the instance
-and window system.
-
-Destroy the swapchain first:
+Destroy objects in reverse order of their dependencies.
 
 ```
+// destroy the swapchain before the device
 vkDestroySwapchainKHR(
     device,
     swapchain,
     nullptr);
-```
 
-Then destroy the surface:
-
-```
+// destroy the surface before the instance
 vkDestroySurfaceKHR(
     instance,
     surface,
     nullptr);
-```
 
-Finally destroy the window:
-
-```
+// destroy the GLFW window
 glfwDestroyWindow(window);
+// stop the GLFW library
 glfwTerminate();
 ```
 
-The logical device and instance would also be destroyed as part of the complete
-program established by the previous lessons.
-
 ## Now type it again
 
-Type the core swapchain creation structure again:
+Type the core swapchain creation structure again.
 
 ```
+// the create-info struct for the swapchain
 VkSwapchainCreateInfoKHR swapchainInfo{};
-
+// identify the swapchain create-info type
 swapchainInfo.sType =
     VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+// the surface the swapchain presents to
 swapchainInfo.surface = surface;
+// the number of images requested
 swapchainInfo.minImageCount = imageCount;
+// image pixel format chosen above
 swapchainInfo.imageFormat = surfaceFormat.format;
+// image color space chosen above
 swapchainInfo.imageColorSpace =
     surfaceFormat.colorSpace;
+// the swapchain image dimensions
 swapchainInfo.imageExtent = extent;
+// one layer per image
 swapchainInfo.imageArrayLayers = 1;
+// images will be used as color render targets
 swapchainInfo.imageUsage =
     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-```
 
-Then type the acquisition call:
-
-```
+// index of the image handed to us
 uint32_t imageIndex = 0;
 
+// acquire an available image (no semaphores yet)
 vkAcquireNextImageKHR(
     device,
     swapchain,
@@ -401,4 +378,3 @@ vkAcquireNextImageKHR(
 ## Wrap up
 
 The flow: window -> surface -> capabilities -> swapchain -> image -> rendering.
-

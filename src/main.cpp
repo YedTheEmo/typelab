@@ -171,7 +171,7 @@ int readKey() {
 // ---------------------------------------------------------------------------
 
 struct LessonEntry {
-    std::string rel_path;   // display path, e.g. "official/webdev/nextjs/api.txt"
+    std::string rel_path;   // display path, e.g. "official/webdev/nextjs/api.md"
     std::string full_path;  // absolute-ish path for opening
 };
 
@@ -198,7 +198,7 @@ std::vector<LessonEntry> scanLessons(const std::string& root) {
         if (ec) break;
         if (!it->is_regular_file(ec)) continue;
         std::string ext = lowerAscii(it->path().extension().string());
-        if (ext != ".txt") continue;
+        if (ext != ".md") continue;
         std::string rel = fs::relative(it->path(), rootp, ec).generic_string();
         if (ec) continue;
         out.push_back({ rel, it->path().string() });
@@ -212,13 +212,14 @@ std::vector<LessonEntry> scanLessons(const std::string& root) {
 
 // One item shown in a single folder of the picker.
 struct DirEntry {
-    std::string name;       // display name (folders end with '/', files omit .txt)
+    std::string name;       // display name (folders end with '/', files omit .md)
     std::string full_path;  // path for opening a file
     std::string rel_path;   // path relative to lessons root
     bool is_dir;
+    bool pinned = false;    // '!' prefix: always sorts first, prefix hidden
 };
 
-// Lists the contents of one directory: folders first, then .txt lessons, each sorted.
+// Lists the contents of one directory: folders first, then .md lessons, each sorted.
 std::vector<DirEntry> listDirectory(const std::string& root,
                                     const std::string& rel) {
     std::vector<DirEntry> out;
@@ -231,10 +232,17 @@ std::vector<DirEntry> listDirectory(const std::string& root,
         if (ec) break;
         std::string name = it->path().filename().string();
         if (it->is_directory(ec)) {
-            std::string child_rel = rel.empty() ? name : rel + "/" + name;
-            out.push_back({ name + "/", it->path().string(), child_rel, true });
+            bool pinned = false;
+            if (!name.empty() && name[0] == '!') {
+                pinned = true;
+                name = name.substr(1);
+            }
+            std::string child_rel = rel.empty()
+                                        ? it->path().filename().string()
+                                        : rel + "/" + it->path().filename().string();
+            out.push_back({ name + "/", it->path().string(), child_rel, true, pinned });
         } else if (it->is_regular_file(ec)) {
-            if (lowerAscii(it->path().extension().string()) != ".txt") continue;
+            if (lowerAscii(it->path().extension().string()) != ".md") continue;
             std::string rel_path = fs::relative(it->path(), root, ec).generic_string();
             if (ec) continue;
             out.push_back({ it->path().stem().string(), it->path().string(), rel_path, false });
@@ -243,6 +251,7 @@ std::vector<DirEntry> listDirectory(const std::string& root,
 
     std::sort(out.begin(), out.end(), [](const DirEntry& a, const DirEntry& b) {
         if (a.is_dir != b.is_dir) return a.is_dir;
+        if (a.pinned != b.pinned) return a.pinned;
         return a.name < b.name;
     });
     return out;
@@ -653,6 +662,7 @@ PickResult runFilePicker(const std::string& root,
             size_t slash = rest.find('/', start);
             std::string part = rest.substr(start, slash == std::string::npos
                                                     ? std::string::npos : slash - start);
+            if (!part.empty() && part[0] == '!') part = part.substr(1);
             crumbs += " / " + part;
             if (slash == std::string::npos) break;
             start = slash + 1;
@@ -808,8 +818,8 @@ int main(int argc, char* argv[]) {
         std::vector<LessonEntry> lessons = scanLessons(lessons_root);
         if (lessons.empty()) {
             std::cout << CLR_SCR
-                      << DIM << "  no .txt lessons found under '" << lessons_root << "'\n"
-                      << "  drop .txt files into the lessons/ tree (official/ or ext/) and press enter\n"
+                      << DIM << "  no .md lessons found under '" << lessons_root << "'\n"
+                      << "  drop .md files into the lessons/ tree (official/ or ext/) and press enter\n"
                       << RESET << std::flush;
             int k = readKey();
             if (k == KEY_CTRL_C || k == KEY_CTRL_Q) break;

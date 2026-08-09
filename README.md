@@ -5,7 +5,7 @@ A terminal-based learning resource for learning by doing: search, pick, and type
 ## How it works
 
 1. Boot into a **lesson picker** — browse folders, type to filter, pick a lesson, press Enter.
-2. The **typing session** loads the chosen `.txt` lesson: type every character exactly as shown.
+2. The **typing session** loads the chosen `.md` lesson: type every character exactly as shown.
 3. Pressing **Ctrl+C** inside a typing session returns you to the picker — the whole app stays in one terminal. Ctrl+C in the picker quits typelab entirely.
 
 ## Features
@@ -23,18 +23,22 @@ A terminal-based learning resource for learning by doing: search, pick, and type
 ```
 lessons/
   official/          bundled lessons (tracked in git)
-    getting-started/01-hello.txt
-    graphics/vulkan/01-vulkan-overview/concept.txt
-    graphics/vulkan/01-vulkan-overview/code.txt
-    graphics/vulkan/02-vulkan-instance-and-device/concept.txt
-    graphics/vulkan/02-vulkan-instance-and-device/code.txt
+    !getting-started/01-hello.md
+    graphics/vulkan/01-vulkan-overview/concept.md
+    graphics/vulkan/01-vulkan-overview/code.md
+    graphics/vulkan/02-vulkan-instance-and-device/concept.md
+    graphics/vulkan/02-vulkan-instance-and-device/code.md
     graphics/vulkan/...
     webdev/nextjs/...
     webdev/tanstack-start/...
   ext/               your own externally-supplied lessons (git-ignored)
 ```
 
-Each lesson is a folder named with a numeric prefix so the folders sort into course order. Inside the folder, `concept.txt` explains the ideas and `code.txt` is the program to type. Drop any `.txt` file anywhere under `lessons/` and it appears when you browse into its folder.
+Each lesson is a folder named with a numeric prefix so the folders sort into course order. Inside the folder, `concept.md` explains the ideas and `code.md` is the program to type. Drop any `.md` file anywhere under `lessons/` and it appears when you browse into its folder.
+
+### Pinning folders
+
+A folder whose name starts with `!` sorts to the top of its parent (above other folders), and the `!` is hidden in the picker. This is useful for a designated first-stop like `!getting-started` without imposing an order on unrelated tracks.
 
 ### Section markers
 
