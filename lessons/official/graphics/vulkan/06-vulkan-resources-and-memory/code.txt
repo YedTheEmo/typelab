@@ -1,0 +1,371 @@
+# Vulkan resources and memory - typing
+
+This lesson creates a buffer, determines its memory requirements, finds a
+compatible memory type, allocates device memory, binds the buffer to that
+memory, and writes CPU data into it.
+
+The example uses a vertex buffer because it demonstrates the complete resource
+lifecycle without introducing images and textures yet.
+
+## Create a vertex buffer
+
+Start with some vertex data:
+
+```
+struct Vertex
+{
+    float x;
+    float y;
+};
+
+Vertex vertices[] = {
+    {-0.5f, -0.5f},
+    { 0.5f, -0.5f},
+    { 0.0f,  0.5f}
+};
+```
+
+Calculate its size:
+
+```
+VkDeviceSize bufferSize =
+    sizeof(vertices);
+```
+
+Describe the buffer:
+
+```
+VkBufferCreateInfo bufferInfo{};
+bufferInfo.sType =
+    VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+bufferInfo.size = bufferSize;
+bufferInfo.usage =
+    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+bufferInfo.sharingMode =
+    VK_SHARING_MODE_EXCLUSIVE;
+```
+
+Create it:
+
+```
+VkBuffer vertexBuffer = VK_NULL_HANDLE;
+
+VkResult result = vkCreateBuffer(
+    device,
+    &bufferInfo,
+    nullptr,
+    &vertexBuffer);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+The buffer now exists as a Vulkan resource, but it has not been given memory.
+
+## Query memory requirements
+
+Ask Vulkan what kind of memory the buffer needs:
+
+```
+VkMemoryRequirements requirements{};
+
+vkGetBufferMemoryRequirements(
+    device,
+    vertexBuffer,
+    &requirements);
+```
+
+The requirements contain three important pieces of information.
+
+The size tells us how much memory to allocate.
+
+The alignment tells us where the resource can begin within an allocation.
+
+The memoryTypeBits field tells us which physical-device memory types are
+compatible with the buffer.
+
+## Inspect memory types
+
+Retrieve the physical device's memory properties:
+
+```
+VkPhysicalDeviceMemoryProperties memoryProperties{};
+
+vkGetPhysicalDeviceMemoryProperties(
+    physicalDevice,
+    &memoryProperties);
+```
+
+Each memory type has a set of property flags.
+
+For this example, find memory that is both host-visible and coherent:
+
+```
+uint32_t memoryTypeIndex = 0;
+
+for (uint32_t i = 0;
+     i < memoryProperties.memoryTypeCount;
+     ++i)
+{
+    bool compatible =
+        requirements.memoryTypeBits & (1 << i);
+
+    VkMemoryPropertyFlags properties =
+        memoryProperties.memoryTypes[i].propertyFlags;
+
+    bool suitable =
+        properties &
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+
+    suitable =
+        suitable &&
+        (properties &
+         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    if (compatible && suitable)
+    {
+        memoryTypeIndex = i;
+        break;
+    }
+}
+```
+
+The compatibility bitmask prevents us from selecting memory that cannot back
+the buffer.
+
+The property flags then select memory with the CPU access characteristics we
+want.
+
+## Allocate device memory
+
+Describe the allocation:
+
+```
+VkMemoryAllocateInfo allocInfo{};
+allocInfo.sType =
+    VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+allocInfo.allocationSize =
+    requirements.size;
+allocInfo.memoryTypeIndex =
+    memoryTypeIndex;
+```
+
+Allocate it:
+
+```
+VkDeviceMemory vertexMemory = VK_NULL_HANDLE;
+
+result = vkAllocateMemory(
+    device,
+    &allocInfo,
+    nullptr,
+    &vertexMemory);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+The allocation now exists independently of the buffer.
+
+## Bind the buffer
+
+Connect the buffer to the allocation:
+
+```
+result = vkBindBufferMemory(
+    device,
+    vertexBuffer,
+    vertexMemory,
+    0);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+The zero offset means that the buffer starts at the beginning of the
+allocation.
+
+The resource relationship is now:
+
+```
+vertexBuffer
+      |
+      v
+vertexMemory
+```
+
+## Map the memory
+
+Because the selected memory is host-visible, the CPU can map it:
+
+```
+void* mapped = nullptr;
+
+result = vkMapMemory(
+    device,
+    vertexMemory,
+    0,
+    bufferSize,
+    0,
+    &mapped);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+The mapped pointer refers to the memory range that the CPU can write.
+
+Copy the vertex data:
+
+```
+std::memcpy(
+    mapped,
+    vertices,
+    static_cast<size_t>(bufferSize));
+```
+
+Then release the mapping:
+
+```
+vkUnmapMemory(
+    device,
+    vertexMemory);
+```
+
+The vertex data is now stored in the memory backing the buffer.
+
+## Use the buffer
+
+A command buffer can bind the buffer before a draw:
+
+```
+VkDeviceSize offset = 0;
+
+vkCmdBindVertexBuffers(
+    commandBuffer,
+    0,
+    1,
+    &vertexBuffer,
+    &offset);
+```
+
+The first argument after the command buffer specifies the binding number.
+
+The vertex buffer can then provide data to the graphics pipeline.
+
+The actual pipeline and draw operation will be introduced later.
+
+## The device-local alternative
+
+The memory used above is convenient for learning because the CPU can write
+directly to it.
+
+A real renderer often uses device-local memory for vertex data:
+
+```
+CPU data
+    |
+    v
+host-visible staging buffer
+    |
+    v
+GPU copy
+    |
+    v
+device-local vertex buffer
+```
+
+The staging approach requires a transfer command and synchronization. It is
+more involved, but it can provide memory that is better suited to frequent GPU
+access.
+
+## Clean up
+
+Destroy the buffer before freeing its backing memory:
+
+```
+vkDestroyBuffer(
+    device,
+    vertexBuffer,
+    nullptr);
+
+vkFreeMemory(
+    device,
+    vertexMemory,
+    nullptr);
+```
+
+The buffer must no longer use the allocation when that allocation is freed.
+
+The important lifetime relationship is:
+
+```
+create buffer
+    |
+    v
+query requirements
+    |
+    v
+allocate memory
+    |
+    v
+bind memory
+    |
+    v
+use buffer
+    |
+    v
+destroy buffer
+    |
+    v
+free memory
+```
+
+## Now type it again
+
+Type the core resource creation sequence:
+
+```
+VkBufferCreateInfo bufferInfo{};
+bufferInfo.sType =
+    VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+bufferInfo.size = bufferSize;
+bufferInfo.usage =
+    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+bufferInfo.sharingMode =
+    VK_SHARING_MODE_EXCLUSIVE;
+```
+
+Then query and allocate its memory:
+
+```
+VkMemoryRequirements requirements{};
+
+vkGetBufferMemoryRequirements(
+    device,
+    vertexBuffer,
+    &requirements);
+
+VkMemoryAllocateInfo allocInfo{};
+allocInfo.sType =
+    VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+allocInfo.allocationSize =
+    requirements.size;
+allocInfo.memoryTypeIndex =
+    memoryTypeIndex;
+```
+
+Finally bind it:
+
+```
+vkBindBufferMemory(
+    device,
+    vertexBuffer,
+    vertexMemory,
+    0);
+```
+
+## Wrap up
+
+The flow: create resource -> query requirements -> allocate memory -> bind -> use.
+

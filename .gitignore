@@ -1,0 +1,22 @@
+# Build artifacts
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+*.idb
+
+# Output directories
+/bin/
+/build/
+
+# User-supplied lessons (keep the .gitkeep so the folder exists)
+/lessons/ext/*
+!/lessons/ext/.gitkeep
+
+# OS / Editor generated
+.DS_Store
+Thumbs.db
+.vs/
+.vscode/
+*.user

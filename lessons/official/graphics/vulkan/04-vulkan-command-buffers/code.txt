@@ -1,0 +1,258 @@
+# Vulkan command buffers - typing
+
+This lesson creates a command pool, allocates a primary command buffer, records
+a command into it, and submits that command buffer to a graphics queue.
+
+The device and graphics queue are assumed to come from the previous lesson.
+The focus here is the lifetime of recorded GPU work.
+
+## Create the command pool
+
+A command pool belongs to a logical device and a queue family.
+
+```
+VkCommandPoolCreateInfo poolInfo{};
+poolInfo.sType =
+    VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+poolInfo.queueFamilyIndex = graphicsFamily;
+```
+
+Create the pool:
+
+```
+VkCommandPool commandPool = VK_NULL_HANDLE;
+
+VkResult result = vkCreateCommandPool(
+    device,
+    &poolInfo,
+    nullptr,
+    &commandPool);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+The pool can now allocate command buffers.
+
+## Allocate a command buffer
+
+Describe the command buffer allocation:
+
+```
+VkCommandBufferAllocateInfo allocInfo{};
+allocInfo.sType =
+    VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+allocInfo.commandPool = commandPool;
+allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+allocInfo.commandBufferCount = 1;
+```
+
+Allocate the buffer:
+
+```
+VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+
+result = vkAllocateCommandBuffers(
+    device,
+    &allocInfo,
+    &commandBuffer);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+A primary command buffer can be submitted directly to a queue.
+
+## Begin recording
+
+Before recording commands, begin the command buffer:
+
+```
+VkCommandBufferBeginInfo beginInfo{};
+beginInfo.sType =
+    VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+result = vkBeginCommandBuffer(
+    commandBuffer,
+    &beginInfo);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+The command buffer is now in the recording state.
+
+## Record a command
+
+Record a draw command:
+
+```
+vkCmdDraw(
+    commandBuffer,
+    3,
+    1,
+    0,
+    0);
+```
+
+This records the operation. It does not execute it immediately.
+
+The four arguments describe the draw:
+
+```
+vertexCount
+instanceCount
+firstVertex
+firstInstance
+```
+
+Three vertices and one instance are requested, starting at vertex zero.
+
+A real render requires a pipeline and render target state. Those pieces will
+be introduced in later lessons. The important point here is how the command
+enters the command buffer.
+
+## Finish recording
+
+End the recording session:
+
+```
+result = vkEndCommandBuffer(commandBuffer);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+The command buffer is now ready to be submitted.
+
+The transition is:
+
+```
+begin -> record -> end
+```
+
+Only the middle stage actually adds GPU commands.
+
+## Describe the submission
+
+Create a submission structure:
+
+```
+VkSubmitInfo submitInfo{};
+submitInfo.sType =
+    VK_STRUCTURE_TYPE_SUBMIT_INFO;
+submitInfo.commandBufferCount = 1;
+submitInfo.pCommandBuffers = &commandBuffer;
+```
+
+The structure points to the command buffer that should be submitted.
+
+Submit it to the graphics queue:
+
+```
+result = vkQueueSubmit(
+    graphicsQueue,
+    1,
+    &submitInfo,
+    VK_NULL_HANDLE);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+The command buffer has now been placed into the queue for GPU execution.
+
+## Wait for completion
+
+This simple example can wait for the queue to become idle:
+
+```
+vkQueueWaitIdle(graphicsQueue);
+```
+
+This is useful for understanding the execution model, but it is not how a
+well-designed renderer should synchronize every frame.
+
+Waiting here blocks the CPU until the queue has finished its work.
+
+Later, synchronization objects will allow the CPU and GPU to work
+asynchronously without unnecessarily stalling one another.
+
+## Clean up
+
+Free the command buffer through its pool:
+
+```
+vkFreeCommandBuffers(
+    device,
+    commandPool,
+    1,
+    &commandBuffer);
+```
+
+Then destroy the pool:
+
+```
+vkDestroyCommandPool(
+    device,
+    commandPool,
+    nullptr);
+```
+
+The device and instance are destroyed by the surrounding Vulkan application.
+
+The important ownership relationship is:
+
+```
+device
+    |
+    v
+command pool
+    |
+    v
+command buffer
+```
+
+## Now type it again
+
+Type the core recording sequence again:
+
+```
+VkCommandBufferBeginInfo beginInfo{};
+beginInfo.sType =
+    VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+vkBeginCommandBuffer(
+    commandBuffer,
+    &beginInfo);
+
+vkCmdDraw(
+    commandBuffer,
+    3,
+    1,
+    0,
+    0);
+
+vkEndCommandBuffer(commandBuffer);
+```
+
+Then submit it:
+
+```
+VkSubmitInfo submitInfo{};
+submitInfo.sType =
+    VK_STRUCTURE_TYPE_SUBMIT_INFO;
+submitInfo.commandBufferCount = 1;
+submitInfo.pCommandBuffers = &commandBuffer;
+
+vkQueueSubmit(
+    graphicsQueue,
+    1,
+    &submitInfo,
+    VK_NULL_HANDLE);
+```
+
+## Wrap up
+
+The flow: pool -> allocate -> begin -> record -> end -> submit -> execute.
+

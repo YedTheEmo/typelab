@@ -1,0 +1,183 @@
+# Vulkan overview - typing
+
+This program introduces Vulkan through its basic execution model.
+
+It does not render anything yet. Instead, it creates the top-level Vulkan
+instance and shows the relationship between an application, Vulkan objects,
+command recording, and queue submission.
+
+The later lessons will replace these placeholders with real initialization and
+rendering code.
+
+## Start with Vulkan
+
+A Vulkan program includes the Vulkan header so it can use Vulkan types and
+functions.
+
+```
+#include <vulkan/vulkan.h>
+
+int main()
+{
+    return 0;
+}
+```
+
+The VkInstance type represents the top-level Vulkan instance.
+
+An instance connects an application to the Vulkan implementation. It is created
+before the physical device and logical device are selected.
+
+## Create the application description
+
+Vulkan uses structures to describe many operations.
+
+VkApplicationInfo contains information about the application itself:
+
+```
+VkApplicationInfo appInfo{};
+appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+appInfo.pApplicationName = "TypeLab Vulkan";
+appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+appInfo.pEngineName = "TypeLab";
+appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+appInfo.apiVersion = VK_API_VERSION_1_3;
+```
+
+The sType field tells Vulkan what kind of structure it has received.
+
+The other fields provide descriptive information and the Vulkan API version
+that the application intends to use.
+
+## Create the instance
+
+VkInstanceCreateInfo describes how the instance should be created.
+
+```
+VkInstanceCreateInfo createInfo{};
+createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+createInfo.pApplicationInfo = &appInfo;
+```
+
+The pApplicationInfo field points to the VkApplicationInfo structure created
+above.
+
+The structures therefore form a small chain of information:
+
+```
+VkApplicationInfo
+        |
+        v
+VkInstanceCreateInfo
+        |
+        v
+   vkCreateInstance
+        |
+        v
+     VkInstance
+```
+
+Now the instance can be created.
+
+```
+VkInstance instance = VK_NULL_HANDLE;
+
+VkResult result =
+    vkCreateInstance(&createInfo, nullptr, &instance);
+```
+
+The returned VkResult tells the application whether creation succeeded.
+
+## Think in terms of recorded work
+
+The instance is only the beginning. Rendering requires many more objects.
+
+A typical Vulkan program eventually creates a device, obtains queues, creates
+resources, records command buffers, and submits those buffers.
+
+A command buffer can contain a draw command such as:
+
+```
+vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+```
+
+The command is recorded into commandBuffer. It is not the same thing as
+immediately executing the draw on the GPU.
+
+Later, the command buffer can be submitted to a queue:
+
+```
+vkQueueSubmit(queue, 1, &submitInfo, fence);
+```
+
+This is the basic distinction to remember:
+
+```
+record commands -> submit commands -> GPU executes commands
+```
+
+## Put the model together
+
+The complete introductory program is intentionally small.
+
+```
+#include <vulkan/vulkan.h>
+
+int main()
+{
+    VkApplicationInfo appInfo{};
+    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    appInfo.pApplicationName = "TypeLab Vulkan";
+    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.pEngineName = "TypeLab";
+    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.apiVersion = VK_API_VERSION_1_3;
+
+    VkInstanceCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    createInfo.pApplicationInfo = &appInfo;
+
+    VkInstance instance = VK_NULL_HANDLE;
+
+    VkResult result =
+        vkCreateInstance(&createInfo, nullptr, &instance);
+
+    if (result != VK_SUCCESS)
+        return 1;
+
+    vkDestroyInstance(instance, nullptr);
+
+    return 0;
+}
+```
+
+This program creates and destroys a Vulkan instance. It does not create a
+device or submit GPU work yet.
+
+That is intentional. Vulkan is built by connecting these pieces together, and
+the next lessons will introduce them one at a time.
+
+## Now type it again
+
+Type the essential creation sequence again:
+
+```
+VkApplicationInfo appInfo{};
+appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+
+VkInstanceCreateInfo createInfo{};
+createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+createInfo.pApplicationInfo = &appInfo;
+
+VkInstance instance = VK_NULL_HANDLE;
+
+VkResult result =
+    vkCreateInstance(&createInfo, nullptr, &instance);
+```
+
+The important syntax is the relationship between the structures and pointers.
+
+## Wrap up
+
+The flow: application info -> instance info -> instance -> future GPU work.
+

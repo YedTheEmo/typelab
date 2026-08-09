@@ -1,0 +1,394 @@
+# Vulkan first triangle - typing
+
+This lesson combines the major Vulkan concepts into one rendering path.
+
+The program uses a vertex buffer, shader stages, a graphics pipeline, a
+swapchain image, a command buffer, synchronization, and presentation.
+
+The surrounding instance, device, swapchain, and synchronization setup follows
+the previous lessons. The focus here is assembling those pieces into a frame.
+
+## Define the triangle
+
+Start with three two-dimensional positions:
+
+```
+struct Vertex
+{
+    float x;
+    float y;
+};
+
+const Vertex vertices[] = {
+    {-0.5f, -0.5f},
+    { 0.5f, -0.5f},
+    { 0.0f,  0.5f}
+};
+```
+
+The vertex shader will receive these positions.
+
+The three vertices form one triangle.
+
+## Describe vertex input
+
+The graphics pipeline needs to know how the vertex buffer is structured.
+
+Describe the binding:
+
+```
+VkVertexInputBindingDescription binding{};
+binding.binding = 0;
+binding.stride = sizeof(Vertex);
+binding.inputRate =
+    VK_VERTEX_INPUT_RATE_VERTEX;
+```
+
+The binding says that each vertex advances by sizeof(Vertex) bytes.
+
+Describe the position attribute:
+
+```
+VkVertexInputAttributeDescription attribute{};
+attribute.binding = 0;
+attribute.location = 0;
+attribute.format = VK_FORMAT_R32G32_SFLOAT;
+attribute.offset = 0;
+```
+
+The shader's location zero input therefore receives two 32-bit floating-point
+values from the beginning of each vertex.
+
+## Describe input assembly
+
+The three vertices should be interpreted as one triangle:
+
+```
+VkPipelineInputAssemblyStateCreateInfo assembly{};
+assembly.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+assembly.topology =
+    VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+assembly.primitiveRestartEnable = VK_FALSE;
+```
+
+A triangle list consumes three vertices for each triangle.
+
+## Describe the viewport
+
+The viewport maps the resulting coordinates onto the framebuffer:
+
+```
+VkViewport viewport{};
+viewport.x = 0.0f;
+viewport.y = 0.0f;
+viewport.width =
+    static_cast<float>(extent.width);
+viewport.height =
+    static_cast<float>(extent.height);
+viewport.minDepth = 0.0f;
+viewport.maxDepth = 1.0f;
+```
+
+The scissor defines the region that can receive fragments:
+
+```
+VkRect2D scissor{};
+scissor.offset = {0, 0};
+scissor.extent = extent;
+```
+
+Package them into viewport state:
+
+```
+VkPipelineViewportStateCreateInfo viewportState{};
+viewportState.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+viewportState.viewportCount = 1;
+viewportState.pViewports = &viewport;
+viewportState.scissorCount = 1;
+viewportState.pScissors = &scissor;
+```
+
+## Describe rasterization
+
+Configure a filled triangle:
+
+```
+VkPipelineRasterizationStateCreateInfo rasterizer{};
+rasterizer.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+rasterizer.lineWidth = 1.0f;
+```
+
+The rasterizer converts the triangle into fragments.
+
+## Describe multisampling and color output
+
+Use one sample per pixel:
+
+```
+VkPipelineMultisampleStateCreateInfo multisampling{};
+multisampling.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+multisampling.rasterizationSamples =
+    VK_SAMPLE_COUNT_1_BIT;
+```
+
+Describe the color blending state:
+
+```
+VkPipelineColorBlendAttachmentState colorBlend{};
+colorBlend.colorWriteMask =
+    VK_COLOR_COMPONENT_R_BIT |
+    VK_COLOR_COMPONENT_G_BIT |
+    VK_COLOR_COMPONENT_B_BIT |
+    VK_COLOR_COMPONENT_A_BIT;
+colorBlend.blendEnable = VK_FALSE;
+```
+
+Then create the global color blend state:
+
+```
+VkPipelineColorBlendStateCreateInfo colorState{};
+colorState.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+colorState.attachmentCount = 1;
+colorState.pAttachments = &colorBlend;
+```
+
+No blending is needed for this first triangle.
+
+## Create the pipeline
+
+The shader stages come from the previous lesson:
+
+```
+VkPipelineShaderStageCreateInfo stages[] = {
+    vertexStage,
+    fragmentStage
+};
+```
+
+Connect the vertex input:
+
+```
+VkPipelineVertexInputStateCreateInfo vertexInput{};
+vertexInput.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+vertexInput.vertexBindingDescriptionCount = 1;
+vertexInput.pVertexBindingDescriptions = &binding;
+vertexInput.vertexAttributeDescriptionCount = 1;
+vertexInput.pVertexAttributeDescriptions = &attribute;
+```
+
+Now assemble the pipeline:
+
+```
+VkGraphicsPipelineCreateInfo pipelineInfo{};
+pipelineInfo.sType =
+    VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+pipelineInfo.stageCount = 2;
+pipelineInfo.pStages = stages;
+pipelineInfo.pVertexInputState = &vertexInput;
+pipelineInfo.pInputAssemblyState = &assembly;
+pipelineInfo.pViewportState = &viewportState;
+pipelineInfo.pRasterizationState = &rasterizer;
+pipelineInfo.pMultisampleState = &multisampling;
+pipelineInfo.pColorBlendState = &colorState;
+pipelineInfo.layout = pipelineLayout;
+```
+
+The rendering target configuration is supplied by the rendering setup used by
+the application.
+
+## Record the draw
+
+Begin the command buffer:
+
+```
+VkCommandBufferBeginInfo beginInfo{};
+beginInfo.sType =
+    VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+vkBeginCommandBuffer(
+    commandBuffer,
+    &beginInfo);
+```
+
+Bind the graphics pipeline:
+
+```
+vkCmdBindPipeline(
+    commandBuffer,
+    VK_PIPELINE_BIND_POINT_GRAPHICS,
+    graphicsPipeline);
+```
+
+Bind the vertex buffer:
+
+```
+VkDeviceSize offset = 0;
+
+vkCmdBindVertexBuffers(
+    commandBuffer,
+    0,
+    1,
+    &vertexBuffer,
+    &offset);
+```
+
+Issue the draw:
+
+```
+vkCmdDraw(
+    commandBuffer,
+    3,
+    1,
+    0,
+    0);
+```
+
+Finish recording:
+
+```
+vkEndCommandBuffer(commandBuffer);
+```
+
+The command buffer now contains the essential triangle rendering commands.
+
+## Submit and present
+
+Wait for the previous frame:
+
+```
+vkWaitForFences(
+    device,
+    1,
+    &inFlightFence,
+    VK_TRUE,
+    UINT64_MAX);
+```
+
+Reset the fence:
+
+```
+vkResetFences(
+    device,
+    1,
+    &inFlightFence);
+```
+
+Acquire a swapchain image:
+
+```
+uint32_t imageIndex = 0;
+
+vkAcquireNextImageKHR(
+    device,
+    swapchain,
+    UINT64_MAX,
+    imageAvailable,
+    VK_NULL_HANDLE,
+    &imageIndex);
+```
+
+Describe the GPU-side wait:
+
+```
+VkPipelineStageFlags waitStage =
+    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+VkSubmitInfo submitInfo{};
+submitInfo.sType =
+    VK_STRUCTURE_TYPE_SUBMIT_INFO;
+submitInfo.waitSemaphoreCount = 1;
+submitInfo.pWaitSemaphores = &imageAvailable;
+submitInfo.pWaitDstStageMask = &waitStage;
+submitInfo.commandBufferCount = 1;
+submitInfo.pCommandBuffers = &commandBuffer;
+submitInfo.signalSemaphoreCount = 1;
+submitInfo.pSignalSemaphores = &renderFinished;
+```
+
+Submit the rendering work:
+
+```
+vkQueueSubmit(
+    graphicsQueue,
+    1,
+    &submitInfo,
+    inFlightFence);
+```
+
+Finally, present the rendered image:
+
+```
+VkPresentInfoKHR presentInfo{};
+presentInfo.sType =
+    VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+presentInfo.waitSemaphoreCount = 1;
+presentInfo.pWaitSemaphores = &renderFinished;
+presentInfo.swapchainCount = 1;
+presentInfo.pSwapchains = &swapchain;
+presentInfo.pImageIndices = &imageIndex;
+
+vkQueuePresentKHR(
+    presentQueue,
+    &presentInfo);
+```
+
+The frame has now traveled through the complete submission path.
+
+## Now type it again
+
+Type the essential draw sequence:
+
+```
+vkCmdBindPipeline(
+    commandBuffer,
+    VK_PIPELINE_BIND_POINT_GRAPHICS,
+    graphicsPipeline);
+
+VkDeviceSize offset = 0;
+
+vkCmdBindVertexBuffers(
+    commandBuffer,
+    0,
+    1,
+    &vertexBuffer,
+    &offset);
+
+vkCmdDraw(
+    commandBuffer,
+    3,
+    1,
+    0,
+    0);
+```
+
+Then type the submission:
+
+```
+vkQueueSubmit(
+    graphicsQueue,
+    1,
+    &submitInfo,
+    inFlightFence);
+```
+
+And the presentation:
+
+```
+vkQueuePresentKHR(
+    presentQueue,
+    &presentInfo);
+```
+
+## Wrap up
+
+The flow: vertices -> pipeline -> command buffer -> queue -> GPU -> swapchain.
+

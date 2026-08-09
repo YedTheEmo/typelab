@@ -1,0 +1,251 @@
+# Vulkan instance and device - typing
+
+This program continues from the Vulkan instance created in the previous
+lesson.
+
+It discovers the available physical devices, selects one, finds a graphics
+queue family, creates a logical device, and retrieves a graphics queue.
+
+The program still does not render anything. It establishes the GPU interface
+that later lessons will use for actual work.
+
+## Enumerate physical devices
+
+Start with an existing Vulkan instance:
+
+```
+VkInstance instance = VK_NULL_HANDLE;
+
+uint32_t deviceCount = 0;
+
+vkEnumeratePhysicalDevices(
+    instance,
+    &deviceCount,
+    nullptr);
+```
+
+The first call asks Vulkan how many physical devices are available.
+
+Once the count is known, allocate storage for the handles:
+
+```
+std::vector<VkPhysicalDevice> devices(deviceCount);
+
+vkEnumeratePhysicalDevices(
+    instance,
+    &deviceCount,
+    devices.data());
+```
+
+The devices vector now contains handles representing the available GPUs.
+
+For this lesson, select the first device:
+
+```
+VkPhysicalDevice physicalDevice = devices[0];
+```
+
+A real application should inspect the available devices and choose one based
+on its requirements. The first device is used here to keep the example focused.
+
+## Inspect the physical device
+
+The application can query properties of the selected GPU:
+
+```
+VkPhysicalDeviceProperties properties{};
+
+vkGetPhysicalDeviceProperties(
+    physicalDevice,
+    &properties);
+```
+
+The device name can be printed to confirm what was selected:
+
+```
+std::cout << properties.deviceName << '\n';
+```
+
+The physical device is discovered rather than created by the application.
+
+## Find a graphics queue family
+
+Ask the physical device how many queue families it provides:
+
+```
+uint32_t queueFamilyCount = 0;
+
+vkGetPhysicalDeviceQueueFamilyProperties(
+    physicalDevice,
+    &queueFamilyCount,
+    nullptr);
+```
+
+Now retrieve their properties:
+
+```
+std::vector<VkQueueFamilyProperties> families(
+    queueFamilyCount);
+
+vkGetPhysicalDeviceQueueFamilyProperties(
+    physicalDevice,
+    &queueFamilyCount,
+    families.data());
+```
+
+Each family has a set of capability flags.
+
+Find the first family that supports graphics:
+
+```
+uint32_t graphicsFamily = 0;
+
+for (uint32_t i = 0; i < queueFamilyCount; ++i)
+{
+    if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+    {
+        graphicsFamily = i;
+        break;
+    }
+}
+```
+
+The graphicsFamily value is the index that will be supplied when the logical
+device is created.
+
+## Describe the queue
+
+A logical device needs to know which queues the application wants.
+
+Give the graphics queue a priority:
+
+```
+float priority = 1.0f;
+```
+
+Now describe the queue family:
+
+```
+VkDeviceQueueCreateInfo queueInfo{};
+
+queueInfo.sType =
+    VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+queueInfo.queueFamilyIndex = graphicsFamily;
+queueInfo.queueCount = 1;
+queueInfo.pQueuePriorities = &priority;
+```
+
+The queue information says that one queue should be created from the selected
+graphics family.
+
+## Create the logical device
+
+The logical device creation structure references the queue information:
+
+```
+VkDeviceCreateInfo deviceInfo{};
+
+deviceInfo.sType =
+    VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+deviceInfo.queueCreateInfoCount = 1;
+deviceInfo.pQueueCreateInfos = &queueInfo;
+```
+
+Create the logical device from the physical device:
+
+```
+VkDevice logicalDevice = VK_NULL_HANDLE;
+
+VkResult result = vkCreateDevice(
+    physicalDevice,
+    &deviceInfo,
+    nullptr,
+    &logicalDevice);
+```
+
+Check that creation succeeded:
+
+```
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+The physical device was selected first. The logical device is now the
+application's interface for using it.
+
+## Retrieve the queue
+
+Get the queue from the logical device:
+
+```
+VkQueue graphicsQueue = VK_NULL_HANDLE;
+
+vkGetDeviceQueue(
+    logicalDevice,
+    graphicsFamily,
+    0,
+    &graphicsQueue);
+```
+
+The zero identifies the first queue in the selected family.
+
+The application can eventually submit command buffers to graphicsQueue.
+
+The important distinction is:
+
+```
+physicalDevice -> hardware that was discovered
+
+logicalDevice -> interface created for using that hardware
+
+graphicsQueue -> submission point obtained from that interface
+```
+
+## Clean up
+
+The logical device should be destroyed before the instance:
+
+```
+vkDestroyDevice(logicalDevice, nullptr);
+vkDestroyInstance(instance, nullptr);
+```
+
+Vulkan objects often have relationships like this. Higher-level objects should
+generally be destroyed before the objects they depend on.
+
+## Now type it again
+
+Type the essential discovery and creation sequence again:
+
+```
+uint32_t deviceCount = 0;
+
+vkEnumeratePhysicalDevices(
+    instance,
+    &deviceCount,
+    nullptr);
+
+std::vector<VkPhysicalDevice> devices(deviceCount);
+
+vkEnumeratePhysicalDevices(
+    instance,
+    &deviceCount,
+    devices.data());
+```
+
+Then retrieve a queue from the logical device:
+
+```
+VkQueue graphicsQueue = VK_NULL_HANDLE;
+
+vkGetDeviceQueue(
+    logicalDevice,
+    graphicsFamily,
+    0,
+    &graphicsQueue);
+```
+
+## Wrap up
+
+The flow: instance -> physical device -> queue family -> logical device -> queue.
+

@@ -1,0 +1,334 @@
+# Vulkan shaders and pipelines - typing
+
+This lesson loads compiled SPIR-V, creates shader modules, describes vertex and
+fragment shader stages, creates a pipeline layout, and shows the essential
+structure used to create a graphics pipeline.
+
+The rendering target and complete first-triangle setup are intentionally left
+for the next lesson.
+
+## Load SPIR-V
+
+Vulkan expects shader code as SPIR-V words.
+
+A simple helper can read a compiled shader file:
+
+```
+#include <fstream>
+#include <vector>
+
+std::vector<char> readFile(
+    const std::string& filename)
+{
+    std::ifstream file(
+        filename,
+        std::ios::ate |
+        std::ios::binary);
+
+    size_t size =
+        static_cast<size_t>(file.tellg());
+
+    std::vector<char> buffer(size);
+
+    file.seekg(0);
+    file.read(buffer.data(), size);
+
+    return buffer;
+}
+```
+
+The shader source was compiled before the Vulkan program runs.
+
+For example:
+
+```
+glslc triangle.vert -o triangle.vert.spv
+glslc triangle.frag -o triangle.frag.spv
+```
+
+The application therefore loads compiled shader code rather than compiling GLSL
+itself.
+
+## Create a shader module
+
+Read the vertex shader:
+
+```
+std::vector<char> vertexCode =
+    readFile("triangle.vert.spv");
+```
+
+Create its module:
+
+```
+VkShaderModuleCreateInfo moduleInfo{};
+moduleInfo.sType =
+    VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+moduleInfo.codeSize = vertexCode.size();
+moduleInfo.pCode =
+    reinterpret_cast<const uint32_t*>(
+        vertexCode.data());
+
+VkShaderModule vertexModule =
+    VK_NULL_HANDLE;
+```
+
+Create the Vulkan object:
+
+```
+VkResult result = vkCreateShaderModule(
+    device,
+    &moduleInfo,
+    nullptr,
+    &vertexModule);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+Repeat the process for the fragment shader:
+
+```
+std::vector<char> fragmentCode =
+    readFile("triangle.frag.spv");
+
+moduleInfo.codeSize = fragmentCode.size();
+moduleInfo.pCode =
+    reinterpret_cast<const uint32_t*>(
+        fragmentCode.data());
+
+VkShaderModule fragmentModule =
+    VK_NULL_HANDLE;
+
+result = vkCreateShaderModule(
+    device,
+    &moduleInfo,
+    nullptr,
+    &fragmentModule);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+The two modules now contain the compiled shader programs.
+
+## Describe the shader stages
+
+Connect the vertex module to the vertex stage:
+
+```
+VkPipelineShaderStageCreateInfo vertexStage{};
+vertexStage.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+vertexStage.stage =
+    VK_SHADER_STAGE_VERTEX_BIT;
+vertexStage.module = vertexModule;
+vertexStage.pName = "main";
+```
+
+Do the same for the fragment shader:
+
+```
+VkPipelineShaderStageCreateInfo fragmentStage{};
+fragmentStage.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+fragmentStage.stage =
+    VK_SHADER_STAGE_FRAGMENT_BIT;
+fragmentStage.module = fragmentModule;
+fragmentStage.pName = "main";
+```
+
+Place both stages into an array:
+
+```
+VkPipelineShaderStageCreateInfo stages[] = {
+    vertexStage,
+    fragmentStage
+};
+```
+
+The pipeline will use both shader stages.
+
+## Create the pipeline layout
+
+The pipeline layout describes the interface between the pipeline and shader
+resources.
+
+For this first example, there are no descriptor sets or push constants yet.
+
+```
+VkPipelineLayoutCreateInfo layoutInfo{};
+layoutInfo.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+VkPipelineLayout pipelineLayout =
+    VK_NULL_HANDLE;
+```
+
+Create the layout:
+
+```
+result = vkCreatePipelineLayout(
+    device,
+    &layoutInfo,
+    nullptr,
+    &pipelineLayout);
+
+if (result != VK_SUCCESS)
+    return 1;
+```
+
+The empty layout is enough for shaders that require no external resources.
+
+## Describe rasterization
+
+The rasterizer converts primitives into fragments.
+
+Use a simple filled triangle configuration:
+
+```
+VkPipelineRasterizationStateCreateInfo rasterizer{};
+rasterizer.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+rasterizer.depthClampEnable = VK_FALSE;
+rasterizer.rasterizerDiscardEnable = VK_FALSE;
+rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+rasterizer.lineWidth = 1.0f;
+rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+```
+
+The pipeline now has explicit rasterization behavior.
+
+## Describe the pipeline
+
+The complete pipeline requires more state than this lesson introduces.
+
+The essential creation structure connects the shader stages and pipeline
+layout:
+
+```
+VkGraphicsPipelineCreateInfo pipelineInfo{};
+pipelineInfo.sType =
+    VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+pipelineInfo.stageCount = 2;
+pipelineInfo.pStages = stages;
+pipelineInfo.layout = pipelineLayout;
+pipelineInfo.pRasterizationState =
+    &rasterizer;
+```
+
+The remaining state describes vertex input, assembly, viewport, multisampling,
+and the rendering target.
+
+For the first triangle, those pieces will be assembled into one complete
+pipeline in the next lesson.
+
+## Bind the pipeline
+
+Once a graphics pipeline exists, a command buffer can bind it:
+
+```
+VkPipeline graphicsPipeline =
+    VK_NULL_HANDLE;
+
+vkCmdBindPipeline(
+    commandBuffer,
+    VK_PIPELINE_BIND_POINT_GRAPHICS,
+    graphicsPipeline);
+```
+
+A subsequent draw command uses the bound pipeline:
+
+```
+vkCmdDraw(
+    commandBuffer,
+    3,
+    1,
+    0,
+    0);
+```
+
+The relationship is:
+
+```
+bind pipeline
+    |
+    v
+bind resources
+    |
+    v
+draw
+```
+
+## Clean up
+
+Shader modules are no longer needed after pipeline creation:
+
+```
+vkDestroyShaderModule(
+    device,
+    fragmentModule,
+    nullptr);
+
+vkDestroyShaderModule(
+    device,
+    vertexModule,
+    nullptr);
+```
+
+The pipeline layout remains part of the pipeline's lifetime:
+
+```
+vkDestroyPipelineLayout(
+    device,
+    pipelineLayout,
+    nullptr);
+```
+
+The graphics pipeline itself is destroyed separately:
+
+```
+vkDestroyPipeline(
+    device,
+    graphicsPipeline,
+    nullptr);
+```
+
+## Now type it again
+
+Type the essential shader-stage setup:
+
+```
+VkPipelineShaderStageCreateInfo vertexStage{};
+vertexStage.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+vertexStage.stage =
+    VK_SHADER_STAGE_VERTEX_BIT;
+vertexStage.module = vertexModule;
+vertexStage.pName = "main";
+
+VkPipelineShaderStageCreateInfo fragmentStage{};
+fragmentStage.sType =
+    VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+fragmentStage.stage =
+    VK_SHADER_STAGE_FRAGMENT_BIT;
+fragmentStage.module = fragmentModule;
+fragmentStage.pName = "main";
+```
+
+Then type the pipeline connection:
+
+```
+VkGraphicsPipelineCreateInfo pipelineInfo{};
+pipelineInfo.sType =
+    VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+pipelineInfo.stageCount = 2;
+pipelineInfo.pStages = stages;
+pipelineInfo.layout = pipelineLayout;
+```
+
+## Wrap up
+
+The flow: shader source -> SPIR-V -> modules -> stages -> pipeline -> bind -> draw.
+
