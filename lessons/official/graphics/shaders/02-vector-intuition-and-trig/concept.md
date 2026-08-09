@@ -1,4 +1,3 @@
-````markdown
 # Vector intuition and trig - concepts
 
 A shader becomes much more expressive once coordinates stop being treated as
@@ -630,5 +629,4 @@ recipes.
 ## Next step
 
 Now type the code version of this lesson.
-````
 

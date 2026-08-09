@@ -1,4 +1,3 @@
-````markdown
 # Vector intuition and trig - typing
 
 This lesson types the core mathematical operations: displacement, distance,
@@ -339,5 +338,4 @@ coordinates -> sine/cosine -> periodic or circular values
 Vectors describe spatial relationships, length extracts distance, normalization
 isolates direction, dot products measure alignment, and trigonometric functions
 turn continuous inputs into smooth periodic or circular behavior.
-````
 

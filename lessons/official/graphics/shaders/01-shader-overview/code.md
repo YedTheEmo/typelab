@@ -1,4 +1,3 @@
-````markdown
 # Shader overview - typing
 
 This lesson types a parallel image calculation: identify an invocation,
@@ -186,7 +185,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 Type the complete mathematical path again without looking back.
 
 ```
-```
 // describe the output image
 RWTexture2D<float4> outputImage;
 
@@ -232,6 +230,4 @@ invocation -> coordinate -> offset -> distance -> brightness -> color
 A shader applies one mathematical rule across many independent invocations.
 Coordinates identify where an invocation is operating, and mathematical
 functions turn those coordinates into values that can become visible output.
-```
-````
 

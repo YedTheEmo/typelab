@@ -1,4 +1,3 @@
-````markdown
 # Shader overview - concepts
 
 A shader is a program that describes how to produce part of an image or
@@ -539,5 +538,4 @@ That is the foundation for everything that follows.
 ## Next step
 
 Now type the code version of this lesson.
-````
 
