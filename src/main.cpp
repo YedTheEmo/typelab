@@ -51,7 +51,7 @@ enum KeyCode {
 // Terminal / input helpers
 // ---------------------------------------------------------------------------
 
-void enableRawMode() {
+void enableRawMode(bool legacy) {
 #ifdef _WIN32
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD dwMode = 0;
@@ -66,9 +66,15 @@ void enableRawMode() {
     raw.c_lflag &= ~(ICANON | ECHO | ISIG);
     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
 #endif
+    if (!legacy) {
+        std::cout << "\x1b[?1049h" << std::flush; // enter alternate screen buffer
+    }
 }
 
-void disableRawMode() {
+void disableRawMode(bool legacy) {
+    if (!legacy) {
+        std::cout << "\x1b[?1049l" << std::flush; // leave alternate screen buffer
+    }
     std::cout << RESET;
 #ifndef _WIN32
     struct termios cooked;
@@ -352,7 +358,8 @@ std::string truncateTo(const std::string& s, size_t maxlen) {
 int runTypingSession(const std::string& filepath,
                      const std::string& rel_path,
                      int max_lines_setting,
-                     bool audio_enabled) {
+                     bool audio_enabled,
+                     bool legacy_render) {
     std::string target = loadNormalizedFile(filepath);
     if (target.empty()) return 0;
 
@@ -368,9 +375,13 @@ int runTypingSession(const std::string& filepath,
     size_t current_line_idx = 0;
 
     auto renderScreen = [&](size_t cursor_pos, size_t window_start_line) {
-        std::cout << CLR_SCR;
         size_t window_end_line = std::min(lines.size(),
                                           window_start_line + static_cast<size_t>(max_lines_per_page));
+
+        // Legacy mode clears the whole screen each frame; default mode redraws
+        // in place (no clear) so the previous frame is overwritten without flicker.
+        if (legacy_render) std::cout << CLR_SCR;
+        else std::cout << "\x1b[H";
 
         for (size_t l = window_start_line; l < window_end_line; ++l) {
             for (size_t i = lines[l].start_pos; i <= lines[l].end_pos; ++i) {
@@ -382,6 +393,7 @@ int runTypingSession(const std::string& filepath,
                     std::cout << RESET << target[i];
                 }
             }
+            if (!legacy_render) std::cout << "\x1b[K";
             std::cout << "\n";
         }
 
@@ -393,10 +405,14 @@ int runTypingSession(const std::string& filepath,
         std::string left = rel_path;
         if (!section.empty()) left += " \xc2\xb7 section: " + section;
         std::cout << DIM << "  " << truncateTo(left, static_cast<size_t>(cols - 4))
-                  << "  " << pct << "%\n"
+                  << "  " << pct << "%";
+        if (!legacy_render) std::cout << "\x1b[K";
+        std::cout << "\n"
                   << "  enter=skip line \xc2\xb7 shift+enter=reset line \xc2\xb7 ctrl+d=next section"
-                  << " \xc2\xb7 ctrl+a=prev section \xc2\xb7 ctrl+c=back to menu\n"
-                  << RESET;
+                  << " \xc2\xb7 ctrl+a=prev section \xc2\xb7 ctrl+c=back to menu";
+        if (!legacy_render) std::cout << "\x1b[K";
+        std::cout << "\n" << RESET;
+        if (!legacy_render) std::cout << "\x1b[J";
 
         // Reposition terminal cursor back to cursor_pos relative to window_start_line
         std::cout << "\x1b[H";
@@ -639,7 +655,8 @@ enum PickResult { PICK_CONTINUE, PICK_QUIT };
 
 PickResult runFilePicker(const std::string& root,
                          int max_lines_setting,
-                         bool audio_enabled) {
+                         bool audio_enabled,
+                         bool legacy_render) {
     std::string query;
     std::string current_rel; // "" = lessons root
     size_t selected = 0;
@@ -741,7 +758,7 @@ PickResult runFilePicker(const std::string& root,
                 refresh();
             } else {
                 runTypingSession(e.full_path, e.rel_path,
-                                 max_lines_setting, audio_enabled);
+                                 max_lines_setting, audio_enabled, legacy_render);
                 refresh();
             }
             continue;
@@ -797,6 +814,7 @@ PickResult runFilePicker(const std::string& root,
 int main(int argc, char* argv[]) {
     int max_lines_setting = 50;
     bool audio_enabled = false;
+    bool legacy_render = false;
     std::string lessons_root = "lessons";
 
     for (int i = 1; i < argc; ++i) {
@@ -811,6 +829,8 @@ int main(int argc, char* argv[]) {
             }
         } else if (arg == "-a" || arg == "--audio") {
             audio_enabled = true;
+        } else if (arg == "--legacy") {
+            legacy_render = true;
         } else if (arg == "-l" || arg == "--lessons") {
             if (i + 1 < argc) {
                 lessons_root = argv[++i];
@@ -819,16 +839,16 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
         } else if (arg == "-h" || arg == "--help") {
-            std::cerr << "Usage: typelab [-n/--lines <num>] [-a/--audio] [-l/--lessons <dir>]\n";
+            std::cerr << "Usage: typelab [-n/--lines <num>] [-a/--audio] [--legacy] [-l/--lessons <dir>]\n";
             return 0;
         } else if (arg[0] == '-') {
             std::cerr << "Unknown option: " << arg << "\n";
-            std::cerr << "Usage: typelab [-n/--lines <num>] [-a/--audio] [-l/--lessons <dir>]\n";
+            std::cerr << "Usage: typelab [-n/--lines <num>] [-a/--audio] [--legacy] [-l/--lessons <dir>]\n";
             return 1;
         }
     }
 
-    enableRawMode();
+    enableRawMode(legacy_render);
 
     PickResult result = PICK_CONTINUE;
     while (result == PICK_CONTINUE) {
@@ -842,10 +862,12 @@ int main(int argc, char* argv[]) {
             if (k == KEY_CTRL_C || k == KEY_CTRL_Q) break;
             continue;
         }
-        result = runFilePicker(lessons_root, max_lines_setting, audio_enabled);
+        result = runFilePicker(lessons_root, max_lines_setting, audio_enabled, legacy_render);
     }
 
-    disableRawMode();
+    // In default mode the app runs in the alternate screen buffer: clear it
+    // first, then leave the buffer so the pre-app screen is restored intact.
     std::cout << CLR_SCR << RESET;
+    disableRawMode(legacy_render);
     return 0;
 }

@@ -87,7 +87,10 @@ Options:
 | `-l, --lessons <dir>` | Use a different lessons root (default: `lessons`) |
 | `-n, --lines <num>`   | Max lines shown per screen (default: 50) |
 | `-a, --audio`         | Beep on mistyped characters |
+| `--legacy`            | Legacy rendering: full-screen clear + redraw on every keypress (no alternate-screen buffer) |
 | `-h, --help`          | Show usage |
+
+By default the typing screen redraws in place without clearing, so it doesn't flicker while typing, and it runs inside the alternate screen buffer (restored when you quit). Use `--legacy` to get the older clear-and-redraw behavior.
 
 ## Controls
 
