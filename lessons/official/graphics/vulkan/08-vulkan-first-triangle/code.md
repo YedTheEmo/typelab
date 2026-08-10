@@ -1,402 +1,373 @@
 # Vulkan first triangle - typing
 
-This lesson types the rendering path: vertices, a graphics pipeline, recorded
-draw commands, and the submit-and-present cycle that shows the triangle.
+This lesson types the complete first-triangle draw path: begin rendering,
+bind the pipeline and vertex buffer, draw three vertices, and finish rendering.
 
-## Define the triangle
+## Prepare the vertex data
 
-The vertex shader reads three positions that form one triangle.
+Define the three positions that make the triangle.
 
-```
-// one vertex has two floats
-struct Vertex
-{
-    float x;
-    float y;
-};
+```cpp
+    // describe one vertex position
+    struct Vertex {
+        float x;
+        float y;
+        float z;
+    };
 
-// three vertices forming a triangle
-const Vertex vertices[] = {
-    {-0.5f, -0.5f},
-    { 0.5f, -0.5f},
-    { 0.0f,  0.5f}
-};
-```
-
-## Describe vertex input
-
-The pipeline needs to know how the vertex buffer is laid out.
-
-```
-// describes one binding of the vertex buffer
-VkVertexInputBindingDescription binding{};
-// binding point zero
-binding.binding = 0;
-// bytes from one vertex to the next
-binding.stride = sizeof(Vertex);
-// data advances per vertex, not per instance
-binding.inputRate =
-    VK_VERTEX_INPUT_RATE_VERTEX;
-
-// describes one attribute inside the binding
-VkVertexInputAttributeDescription attribute{};
-// attribute comes from binding zero
-attribute.binding = 0;
-// shader input location zero
-attribute.location = 0;
-// two 32-bit floats per vertex
-attribute.format = VK_FORMAT_R32G32_SFLOAT;
-// the attribute starts at byte zero of the vertex
-attribute.offset = 0;
+    // store three vertices for one triangle
+    Vertex vertices[]{
+        { 0.0f, -0.5f, 0.0f },
+        { 0.5f,  0.5f, 0.0f },
+        {-0.5f,  0.5f, 0.0f }
+    };
 ```
 
-## Describe input assembly
+## Begin the render operation
 
-Three vertices should be interpreted as one triangle.
+Describe the swapchain image that receives the triangle.
 
-```
-// the create-info struct for input assembly
-VkPipelineInputAssemblyStateCreateInfo assembly{};
-// identify the assembly create-info type
-assembly.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-// every three vertices become one triangle
-assembly.topology =
-    VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-// no primitive restart used
-assembly.primitiveRestartEnable = VK_FALSE;
-```
+```cpp
+    // describe the color attachment
+    VkRenderingAttachmentInfo colorAttachment{
+        VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        nullptr,
+        colorImageView,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_RESOLVE_MODE_NONE,
+        VK_NULL_HANDLE,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_ATTACHMENT_LOAD_OP_CLEAR,
+        VK_ATTACHMENT_STORE_OP_STORE,
+        clearValue
+    };
 
-## Describe the viewport
+    // describe the rendering area
+    VkRenderingInfo renderingInfo{
+        VK_STRUCTURE_TYPE_RENDERING_INFO,
+        nullptr,
+        0,
+        renderArea,
+        1,
+        0,
+        1,
+        &colorAttachment,
+        nullptr,
+        nullptr
+    };
 
-The viewport maps coordinates onto the framebuffer.
-
-```
-// the create-info struct for the viewport
-VkViewport viewport{};
-// left edge of the viewport
-viewport.x = 0.0f;
-// top edge of the viewport
-viewport.y = 0.0f;
-// width matches the swapchain extent
-viewport.width =
-    static_cast<float>(extent.width);
-// height matches the swapchain extent
-viewport.height =
-    static_cast<float>(extent.height);
-// depth range starts at zero
-viewport.minDepth = 0.0f;
-// depth range ends at one
-viewport.maxDepth = 1.0f;
-
-// the region that can receive fragments
-VkRect2D scissor{};
-// starts at the top-left corner
-scissor.offset = {0, 0};
-// covers the whole swapchain extent
-scissor.extent = extent;
-
-// packages viewport and scissor together
-VkPipelineViewportStateCreateInfo viewportState{};
-// identify the viewport-state type
-viewportState.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-// one viewport
-viewportState.viewportCount = 1;
-// the viewport above
-viewportState.pViewports = &viewport;
-// one scissor
-viewportState.scissorCount = 1;
-// the scissor above
-viewportState.pScissors = &scissor;
+    // begin rendering to the swapchain image
+    vkCmdBeginRendering(commandBuffer, &renderingInfo);
 ```
 
-## Describe rasterization
+## Bind the graphics pipeline
 
-The rasterizer turns the triangle into fragments.
+Select the pipeline that defines how the triangle is processed.
 
-```
-// the create-info struct for rasterization
-VkPipelineRasterizationStateCreateInfo rasterizer{};
-// identify the rasterizer create-info type
-rasterizer.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-// fill every pixel of the triangle
-rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-// discard back-facing triangles
-rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-// vertices wind clockwise on the front face
-rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-// raster line width in pixels
-rasterizer.lineWidth = 1.0f;
+```cpp
+    // bind the graphics pipeline
+    vkCmdBindPipeline(
+        commandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        graphicsPipeline
+    );
 ```
 
-## Describe multisampling and color output
+## Set dynamic state
 
-Use one sample per pixel and write color without blending.
+Provide the viewport and scissor selected for this frame.
 
-```
-// the create-info struct for multisampling
-VkPipelineMultisampleStateCreateInfo multisampling{};
-// identify the multisample create-info type
-multisampling.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-// one sample per pixel
-multisampling.rasterizationSamples =
-    VK_SAMPLE_COUNT_1_BIT;
+```cpp
+    // set the viewport used by the draw
+    vkCmdSetViewport(
+        commandBuffer,
+        0,
+        1,
+        &viewport
+    );
 
-// color output for one attachment
-VkPipelineColorBlendAttachmentState colorBlend{};
-// write every color channel
-colorBlend.colorWriteMask =
-    VK_COLOR_COMPONENT_R_BIT |
-    VK_COLOR_COMPONENT_G_BIT |
-    VK_COLOR_COMPONENT_B_BIT |
-    VK_COLOR_COMPONENT_A_BIT;
-// no blending needed for the first triangle
-colorBlend.blendEnable = VK_FALSE;
-
-// the global color blend state
-VkPipelineColorBlendStateCreateInfo colorState{};
-// identify the color-state type
-colorState.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-// one color attachment
-colorState.attachmentCount = 1;
-// the attachment state above
-colorState.pAttachments = &colorBlend;
+    // set the scissor used by the draw
+    vkCmdSetScissor(
+        commandBuffer,
+        0,
+        1,
+        &scissor
+    );
 ```
 
-## Create the pipeline
+## Bind the vertex buffer
 
-The pipeline create-info assembles every state structure.
+Select the buffer containing the triangle's three vertices.
 
-```
-// the shader stages from the previous lesson
-VkPipelineShaderStageCreateInfo stages[] = {
-    vertexStage,
-    fragmentStage
-};
+```cpp
+    // start reading vertices at the beginning of the buffer
+    VkDeviceSize offset = 0;
 
-// the create-info struct for vertex input
-VkPipelineVertexInputStateCreateInfo vertexInput{};
-// identify the vertex-input type
-vertexInput.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-// one vertex binding
-vertexInput.vertexBindingDescriptionCount = 1;
-// the binding built above
-vertexInput.pVertexBindingDescriptions = &binding;
-// one vertex attribute
-vertexInput.vertexAttributeDescriptionCount = 1;
-// the attribute built above
-vertexInput.pVertexAttributeDescriptions = &attribute;
-
-// the create-info struct for the graphics pipeline
-VkGraphicsPipelineCreateInfo pipelineInfo{};
-// identify the pipeline create-info type
-pipelineInfo.sType =
-    VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-// two shader stages
-pipelineInfo.stageCount = 2;
-// the stage array
-pipelineInfo.pStages = stages;
-// how vertices are read
-pipelineInfo.pVertexInputState = &vertexInput;
-// how vertices become primitives
-pipelineInfo.pInputAssemblyState = &assembly;
-// how primitives map to the framebuffer
-pipelineInfo.pViewportState = &viewportState;
-// how primitives become fragments
-pipelineInfo.pRasterizationState = &rasterizer;
-// how many samples per pixel
-pipelineInfo.pMultisampleState = &multisampling;
-// how color is written
-pipelineInfo.pColorBlendState = &colorState;
-// the pipeline layout from the previous lesson
-pipelineInfo.layout = pipelineLayout;
+    // bind the triangle vertex buffer
+    vkCmdBindVertexBuffers(
+        commandBuffer,
+        0,
+        1,
+        &vertexBuffer,
+        &offset
+    );
 ```
 
-## Record the draw
+## Draw the triangle
 
-The command buffer is filled with the draw operations.
+Request one triangle by processing three vertices.
 
-```
-// the create-info struct for begin
-VkCommandBufferBeginInfo beginInfo{};
-// identify the begin-info type
-beginInfo.sType =
-    VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-
-// move the buffer into the recording state
-vkBeginCommandBuffer(
-    commandBuffer,
-    &beginInfo);
-
-// bind the graphics pipeline to the buffer
-vkCmdBindPipeline(
-    commandBuffer,
-    VK_PIPELINE_BIND_POINT_GRAPHICS,
-    graphicsPipeline);
-
-// vertex data starts at the beginning of the buffer
-VkDeviceSize offset = 0;
-
-// bind the vertex buffer at binding point zero
-vkCmdBindVertexBuffers(
-    commandBuffer,
-    0,             // binding number
-    1,             // one buffer
-    &vertexBuffer,
-    &offset);
-
-// draw three vertices as one instance
-vkCmdDraw(
-    commandBuffer,
-    3,   // vertex count
-    1,   // instance count
-    0,   // first vertex
-    0);  // first instance
-
-// leave the recording state
-vkEndCommandBuffer(commandBuffer);
+```cpp
+    // draw three vertices as one triangle
+    vkCmdDraw(
+        commandBuffer,
+        3,
+        1,
+        0,
+        0
+    );
 ```
 
-## Submit and present
+## End rendering
 
-The recorded buffer travels through the queue to the screen.
+Close the rendering operation after the draw has been recorded.
 
+```cpp
+    // finish the rendering operation
+    vkCmdEndRendering(commandBuffer);
 ```
-// block the CPU until the previous frame is done
-vkWaitForFences(
-    device,
-    1,
-    &inFlightFence,
-    VK_TRUE,
-    UINT64_MAX);
 
-// prepare the fence for this frame
-vkResetFences(
-    device,
-    1,
-    &inFlightFence);
+## Prepare presentation
 
-// index of the image handed to us
-uint32_t imageIndex = 0;
+The rendered image must be transitioned into the state expected by the
+presentation engine.
 
-// acquire an image and signal imageAvailable when ready
-vkAcquireNextImageKHR(
-    device,
-    swapchain,
-    UINT64_MAX,
-    imageAvailable,
-    VK_NULL_HANDLE,
-    &imageIndex);
+```cpp
+    // describe the image transition
+    VkImageMemoryBarrier2 presentBarrier{
+        VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        nullptr,
+        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_PIPELINE_STAGE_2_NONE,
+        VK_ACCESS_2_NONE,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        queueFamily,
+        queueFamily,
+        colorImage,
+        {
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0,
+            1,
+            0,
+            1
+        }
+    };
 
-// only the color attachment stage needs to wait
-VkPipelineStageFlags waitStage =
-    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    // describe the dependency information
+    VkDependencyInfo dependencyInfo{
+        VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        nullptr,
+        0,
+        0,
+        nullptr,
+        1,
+        &presentBarrier,
+        0,
+        nullptr
+    };
 
-// the create-info struct for the submission
-VkSubmitInfo submitInfo{};
-// identify the submit-info type
-submitInfo.sType =
-    VK_STRUCTURE_TYPE_SUBMIT_INFO;
-// wait on one semaphore
-submitInfo.waitSemaphoreCount = 1;
-// the semaphore to wait on
-submitInfo.pWaitSemaphores = &imageAvailable;
-// the stage that must wait
-submitInfo.pWaitDstStageMask = &waitStage;
-// submit one command buffer
-submitInfo.commandBufferCount = 1;
-// the recorded draw buffer
-submitInfo.pCommandBuffers = &commandBuffer;
-// signal one semaphore when done
-submitInfo.signalSemaphoreCount = 1;
-// the semaphore that reports rendering finished
-submitInfo.pSignalSemaphores = &renderFinished;
+    // transition the image for presentation
+    vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
+```
 
-// submit the rendering work and arm the fence
-vkQueueSubmit(
-    graphicsQueue,
-    1,
-    &submitInfo,
-    inFlightFence);
+## Submit the frame
 
-// the create-info struct for presentation
-VkPresentInfoKHR presentInfo{};
-// identify the present-info type
-presentInfo.sType =
-    VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-// wait for rendering before presenting
-presentInfo.waitSemaphoreCount = 1;
-// the semaphore that says rendering is done
-presentInfo.pWaitSemaphores = &renderFinished;
-// present to one swapchain
-presentInfo.swapchainCount = 1;
-// the swapchain to present to
-presentInfo.pSwapchains = &swapchain;
-// which image to present
-presentInfo.pImageIndices = &imageIndex;
+Submit the command buffer so the GPU can execute the recorded draw.
 
-// request the presentation
-vkQueuePresentKHR(
-    presentQueue,
-    &presentInfo);
+```cpp
+    // describe the command buffer submission
+    VkCommandBufferSubmitInfo commandInfo{
+        VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+        nullptr,
+        commandBuffer,
+        0
+    };
+
+    // describe the signal operation
+    VkSemaphoreSubmitInfo signalInfo{
+        VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        nullptr,
+        renderFinishedSemaphore,
+        0,
+        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        0
+    };
+
+    // describe the complete submission
+    VkSubmitInfo2 submitInfo{
+        VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+        nullptr,
+        0,
+        0,
+        nullptr,
+        1,
+        &commandInfo,
+        1,
+        &signalInfo
+    };
+
+    // submit the recorded triangle
+    vkQueueSubmit2(
+        graphicsQueue,
+        1,
+        &submitInfo,
+        frameFence
+    );
+```
+
+## Present the image
+
+Give the completed swapchain image to the presentation queue.
+
+```cpp
+    // describe the swapchain image to present
+    VkPresentInfoKHR presentInfo{
+        VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        nullptr,
+        1,
+        &renderFinishedSemaphore,
+        1,
+        &swapchain,
+        &imageIndex,
+        nullptr
+    };
+
+    // present the rendered image
+    vkQueuePresentKHR(
+        presentQueue,
+        &presentInfo
+    );
 ```
 
 ## Now type it again
 
-Type the essential draw sequence.
+Re-drill the core rendering sequence without the setup explanations.
 
+```cpp
+    // describe the color attachment
+    VkRenderingAttachmentInfo colorAttachment{
+        VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        nullptr,
+        colorImageView,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_RESOLVE_MODE_NONE,
+        VK_NULL_HANDLE,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_ATTACHMENT_LOAD_OP_CLEAR,
+        VK_ATTACHMENT_STORE_OP_STORE,
+        clearValue
+    };
+
+    // describe the rendering operation
+    VkRenderingInfo renderingInfo{
+        VK_STRUCTURE_TYPE_RENDERING_INFO,
+        nullptr,
+        0,
+        renderArea,
+        1,
+        0,
+        1,
+        &colorAttachment,
+        nullptr,
+        nullptr
+    };
+
+    // begin rendering
+    vkCmdBeginRendering(commandBuffer, &renderingInfo);
+
+    // bind the graphics pipeline
+    vkCmdBindPipeline(
+        commandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        graphicsPipeline
+    );
+
+    // bind the triangle vertex buffer
+    vkCmdBindVertexBuffers(
+        commandBuffer,
+        0,
+        1,
+        &vertexBuffer,
+        &offset
+    );
+
+    // draw the three triangle vertices
+    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+    // finish rendering
+    vkCmdEndRendering(commandBuffer);
 ```
-// bind the graphics pipeline to the buffer
-vkCmdBindPipeline(
-    commandBuffer,
-    VK_PIPELINE_BIND_POINT_GRAPHICS,
-    graphicsPipeline);
 
-// vertex data starts at the beginning of the buffer
-VkDeviceSize offset = 0;
+Re-drill the final image transition and presentation.
 
-// bind the vertex buffer at binding point zero
-vkCmdBindVertexBuffers(
-    commandBuffer,
-    0,             // binding number
-    1,             // one buffer
-    &vertexBuffer,
-    &offset);
+```cpp
+    // describe the image transition
+    VkImageMemoryBarrier2 presentBarrier{
+        VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        nullptr,
+        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_PIPELINE_STAGE_2_NONE,
+        VK_ACCESS_2_NONE,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        queueFamily,
+        queueFamily,
+        colorImage,
+        {
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0,
+            1,
+            0,
+            1
+        }
+    };
 
-// draw three vertices as one instance
-vkCmdDraw(
-    commandBuffer,
-    3,   // vertex count
-    1,   // instance count
-    0,   // first vertex
-    0);  // first instance
-```
+    // describe the transition dependency
+    VkDependencyInfo dependencyInfo{
+        VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        nullptr,
+        0,
+        0,
+        nullptr,
+        1,
+        &presentBarrier,
+        0,
+        nullptr
+    };
 
-Then type the submission.
+    // transition the image to presentation layout
+    vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
 
-```
-// submit the rendering work and arm the fence
-vkQueueSubmit(
-    graphicsQueue,
-    1,
-    &submitInfo,
-    inFlightFence);
-```
+    // submit the recorded command buffer
+    vkQueueSubmit2(
+        graphicsQueue,
+        1,
+        &submitInfo,
+        frameFence
+    );
 
-And the presentation.
-
-```
-// request the presentation
-vkQueuePresentKHR(
-    presentQueue,
-    &presentInfo);
+    // present the completed swapchain image
+    vkQueuePresentKHR(
+        presentQueue,
+        &presentInfo
+    );
 ```
 
 ## Wrap up
 
-The flow: vertices -> pipeline -> command buffer -> queue -> GPU -> swapchain.
+```text
+acquire -> begin -> bind pipeline -> bind vertices -> draw -> end -> submit -> present
+```

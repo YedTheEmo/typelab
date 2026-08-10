@@ -14,6 +14,7 @@ A terminal-based learning resource for learning by doing: search, pick, and type
 - **Nested lesson tree**: lessons are organized in subfolders so the catalog can grow (`official/graphics/vulkan`, `official/webdev/nextjs`, …).
 - **Section navigation**: lesson files use markdown-style `#` headings as section markers. Press **Ctrl+D** to skip the current section and jump to the next heading; press **Ctrl+A** to jump back to the previous heading.
 - **Skip a line**: press **Enter** to mark the rest of the current line as skipped and move on.
+- **Reset a line** (Windows): press **Shift+Enter** to clear the current line's green/red markings and return to its first character.
 - **Auto-skip leading indentation**: leading spaces/tabs on a line are auto-typed for you, and a single `Backspace` clears the whole indent.
 - **Visual feedback**: green = correct, red = mistyped.
 - **UTF-8 aware** input and rendering.
@@ -105,6 +106,7 @@ Options:
 - Type the text exactly as shown
 - `Backspace` move back & edit (one press clears an auto-skipped indent)
 - `Enter` skip the rest of the current line
+- `Shift+Enter` reset the current line: clear its green/red markings and jump back to the first character (Windows)
 - `Ctrl+D` skip the current section (jump to next `#` heading)
 - `Ctrl+A` jump back to the previous `#` heading
 - `Ctrl+C` / `Ctrl+Q` exit the session and return to the picker

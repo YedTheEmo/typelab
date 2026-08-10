@@ -12,6 +12,7 @@
 #ifdef _WIN32
     #include <conio.h>
     #include <windows.h>
+    #pragma comment(lib, "user32.lib")
 #else
     #include <termios.h>
     #include <unistd.h>
@@ -393,8 +394,8 @@ int runTypingSession(const std::string& filepath,
         if (!section.empty()) left += " \xc2\xb7 section: " + section;
         std::cout << DIM << "  " << truncateTo(left, static_cast<size_t>(cols - 4))
                   << "  " << pct << "%\n"
-                  << "  enter=skip line \xc2\xb7 ctrl+d=next section \xc2\xb7 ctrl+a=prev section"
-                  << " \xc2\xb7 ctrl+c=back to menu\n"
+                  << "  enter=skip line \xc2\xb7 shift+enter=reset line \xc2\xb7 ctrl+d=next section"
+                  << " \xc2\xb7 ctrl+a=prev section \xc2\xb7 ctrl+c=back to menu\n"
                   << RESET;
 
         // Reposition terminal cursor back to cursor_pos relative to window_start_line
@@ -551,8 +552,24 @@ int runTypingSession(const std::string& filepath,
             continue;
         }
 
-        // Enter: skip remaining characters on the line (marked red) and move to next line
+        // Shift+Enter: reset the current line — clear green/red markings and return to its first character
         if (ch == '\r' || ch == '\n') {
+            bool shift_held = false;
+#ifdef _WIN32
+            shift_held = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+#endif
+            if (shift_held) {
+                size_t ls = lines[current_line_idx].start_pos;
+                size_t le = lines[current_line_idx].end_pos;
+                for (size_t i = ls; i <= le && i < target.size(); ++i) {
+                    typed_status[i] = 0;
+                }
+                pos = ls;
+                locateLine();
+                autoSkipIndent();
+                renderScreen(pos, window_start_line);
+                continue;
+            }
             if (target[pos] != '\n') {
                 for (size_t i = pos; i <= lines[current_line_idx].end_pos; ++i) {
                     typed_status[i] = 2;

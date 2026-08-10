@@ -1,303 +1,452 @@
 # Vulkan resources and memory - concepts
 
-A Vulkan application does not put data directly into a GPU by calling a single
-allocation function. Instead, it creates a resource such as a buffer or image,
-allocates suitable device memory, and binds the resource to that memory.
-
-This separation is one of the reasons Vulkan can be explicit and flexible.
+Vulkan separates a resource from the memory that backs it. A buffer or image
+describes how the GPU should interpret storage, while VkDeviceMemory provides
+the allocation containing that storage.
 
 The basic relationship is:
 
-```
-resource
-    |
-    v
-device memory
-    |
-    v
-   GPU
-```
+```text
+resource -> requirements -> memory type -> allocation -> binding -> use
+````
 
-A VkBuffer describes a region of memory intended for structured data. A
-VkImage describes memory used for image data such as textures or render
-targets.
+The application therefore creates a resource first, asks Vulkan what memory it
+requires, chooses a compatible memory type, allocates memory, and finally binds
+the resource to that memory.
 
 ## Buffers
 
-A buffer represents a linear region of data.
+A VkBuffer represents a linear region of GPU-accessible data. It can contain
+vertices, indices, uniform data, storage data, or transfer data depending on
+the usage flags supplied during creation.
 
-For example, a vertex buffer might contain:
-
-```
-vertex 0
-vertex 1
-vertex 2
-vertex 3
-```
-
-Create one by describing its size and intended usage:
-
-```
-VkBufferCreateInfo info{};
-info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-info.size = 1024;
-info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-
-VkBuffer buffer;
-
-vkCreateBuffer(
-    device,
-    &info,
+```cpp
+VkBufferCreateInfo bufferInfo{
+    VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
     nullptr,
-    &buffer);
+    0,
+    size,
+    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+    VK_SHARING_MODE_EXCLUSIVE,
+    0,
+    nullptr
+};
 ```
 
-The usage flag tells Vulkan what operations the buffer is intended to support.
+The usage flag is part of the buffer's creation contract. The buffer itself
+does not know that its bytes are "vertices"; the command that consumes it
+gives those bytes their meaning.
 
-A buffer itself does not contain allocated device memory yet. It describes a
-resource that needs memory backing.
+A buffer is therefore best thought of as a GPU resource describing a linear
+range of storage rather than as an array that automatically owns memory.
 
 ## Images
 
-Images are similar resources, but they have dimensions, formats, and image
-layouts.
+A VkImage represents structured storage rather than a simple linear byte
+range. Its description includes dimensions, format, mip levels, array layers,
+samples, tiling, and intended usages.
 
-A color image might be described as:
-
+```cpp
+VkImageCreateInfo imageInfo{
+    VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+    nullptr,
+    0,
+    VK_IMAGE_TYPE_2D,
+    format,
+    {width, height, 1},
+    1,
+    1,
+    VK_SAMPLE_COUNT_1_BIT,
+    VK_IMAGE_TILING_OPTIMAL,
+    VK_IMAGE_USAGE_SAMPLED_BIT,
+    VK_SHARING_MODE_EXCLUSIVE,
+    0,
+    nullptr,
+    VK_IMAGE_LAYOUT_UNDEFINED
+};
 ```
-VkImageCreateInfo info{};
-info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-info.imageType = VK_IMAGE_TYPE_2D;
-info.format = VK_FORMAT_R8G8B8A8_SRGB;
-info.extent = { 1280, 720, 1 };
-info.mipLevels = 1;
-info.arrayLayers = 1;
-```
 
-An image may be used as a color attachment, sampled texture, transfer target,
-or for other purposes depending on its usage flags.
+Images can represent textures, color attachments, depth attachments, and
+transfer targets. Unlike buffers, images also have layouts describing how
+their contents are currently intended to be accessed.
 
-Images therefore carry more structural information than buffers.
+That layout becomes important when an image changes roles between operations.
 
-## Query memory requirements
+## Resource creation and allocation
 
-After creating a resource, ask Vulkan what memory it requires.
+Creating a resource does not allocate its backing memory. After creating a
+buffer, the application asks Vulkan for its memory requirements.
 
-For a buffer:
-
-```
-VkMemoryRequirements requirements;
+```cpp
+VkMemoryRequirements requirements{};
 
 vkGetBufferMemoryRequirements(
     device,
     buffer,
-    &requirements);
+    &requirements
+);
 ```
 
-The result includes the required allocation size, alignment, and a bitmask
-describing compatible memory types.
+The requirements contain three particularly important values:
 
-The application cannot simply choose any device memory.
+```text
+size
+alignment
+memoryTypeBits
+```
+
+size specifies how much memory is required. alignment specifies where the
+resource may begin inside an allocation. memoryTypeBits specifies which memory
+types are compatible with the resource.
+
+The resource therefore constrains the possible allocation.
 
 ## Memory types
 
-A physical device exposes several memory types.
+A physical device exposes a collection of memory types and heaps. The
+application obtains their properties from the physical device.
 
-They differ in properties such as whether the CPU can directly map them or
-whether they are intended primarily for GPU access.
-
-Query the available memory properties:
-
-```
-VkPhysicalDeviceMemoryProperties memoryProperties;
+```cpp
+VkPhysicalDeviceMemoryProperties properties{};
 
 vkGetPhysicalDeviceMemoryProperties(
     physicalDevice,
-    &memoryProperties);
+    &properties
+);
 ```
 
-The memory requirements provide a bitmask. Each set bit identifies a memory
-type that is compatible with the resource.
+Common memory properties include DEVICE_LOCAL, HOST_VISIBLE, HOST_COHERENT,
+and HOST_CACHED.
 
-The application combines that mask with desired properties to find a suitable
-type.
+DEVICE_LOCAL memory is generally preferred for resources heavily accessed by
+the GPU. HOST_VISIBLE memory can be mapped by the CPU and is therefore useful
+for uploading or updating data.
 
-For example, CPU-visible memory commonly uses:
+The exact relationship between these properties and physical RAM or VRAM
+depends on the device. Vulkan exposes capabilities rather than pretending
+that every machine has the same memory architecture.
 
+## Choosing a memory type
+
+Memory selection has two separate conditions.
+
+First, the resource must permit the memory type through memoryTypeBits.
+Second, the memory type must provide the properties required by the intended
+use.
+
+```cpp
+if ((requirements.memoryTypeBits & (1u << i)) &&
+    (properties & requested) == requested) {
+    memoryTypeIndex = i;
+}
 ```
-VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+
+The first expression checks resource compatibility.
+
+The second checks the application's requested properties.
+
+Both conditions are necessary. Choosing a device-local type without checking
+memoryTypeBits is not a valid general memory-selection strategy.
+
+## Allocation
+
+After selecting a compatible type, the application creates a memory
+allocation.
+
+```cpp
+VkMemoryAllocateInfo allocateInfo{
+    VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+    nullptr,
+    requirements.size,
+    memoryTypeIndex
+};
 ```
 
-Coherent host memory additionally uses:
+The logical device creates the allocation:
 
-```
-VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-```
-
-Device-local memory commonly uses:
-
-```
-VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-```
-
-## Allocate memory
-
-Once a suitable memory type has been selected, create an allocation:
-
-```
-VkMemoryAllocateInfo allocInfo{};
-allocInfo.sType =
-    VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-allocInfo.allocationSize =
-    requirements.size;
-allocInfo.memoryTypeIndex =
-    memoryTypeIndex;
-
-VkDeviceMemory memory;
+```cpp
+VkDeviceMemory memory = VK_NULL_HANDLE;
 
 vkAllocateMemory(
     device,
-    &allocInfo,
+    &allocateInfo,
     nullptr,
-    &memory);
+    &memory
+);
 ```
 
-The allocation now represents actual device memory.
+The allocation now exists independently from the buffer. Vulkan intentionally
+does not hide the relationship between the resource and its memory.
 
-The resource still needs to be bound to it.
+## Binding
 
-## Bind the resource
+A buffer is connected to an allocation with vkBindBufferMemory.
 
-Bind the buffer to the allocation:
-
-```
+```cpp
 vkBindBufferMemory(
     device,
     buffer,
     memory,
-    0);
+    0
+);
 ```
 
-The final argument is the offset into the allocation.
+The final argument is the offset inside the allocation. It can be nonzero when
+multiple resources share one larger allocation, provided the offset satisfies
+the resource's alignment requirement.
 
-The complete relationship is now:
+Images use the corresponding operation:
 
+```cpp
+vkBindImageMemory(device, image, memory, 0);
 ```
-VkBuffer
-    |
-    | vkBindBufferMemory
-    v
+
+The resulting relationship can be pictured as:
+
+```text
 VkDeviceMemory
++--------------------------------+
+| resource A | resource B | ... |
++--------------------------------+
+       ^             ^
+       |             |
+    offset A      offset B
 ```
 
-This distinction is important. A buffer is a Vulkan resource describing how
-memory will be used. VkDeviceMemory is the allocation that backs that resource.
+This is the foundation for suballocation.
 
-## Uploading data
+## Why suballocate
 
-If memory is host-visible, the CPU can map it:
+A renderer can contain thousands of buffers and images. Creating one
+VkDeviceMemory allocation for every resource can create unnecessary overhead
+and can run into implementation limits.
 
+A memory allocator can instead obtain larger blocks and divide them into
+regions.
+
+```text
+large allocation
++--------------------------------------+
+| vertex | index | uniform | texture   |
++--------------------------------------+
 ```
+
+The allocator tracks offsets, sizes, alignment, and free regions.
+
+Vulkan supplies the low-level primitives. The renderer decides how those
+primitives are organized into a practical allocation strategy.
+
+## Host-visible memory
+
+CPU uploads generally require host-visible memory. The application maps the
+allocation to obtain a CPU-accessible pointer.
+
+```cpp
 void* mapped = nullptr;
 
 vkMapMemory(
     device,
     memory,
     0,
-    dataSize,
+    size,
     0,
-    &mapped);
+    &mapped
+);
 ```
 
-The application can then copy data into the mapped region:
+The application can then write data:
 
-```
-std::memcpy(mapped, data, dataSize);
+```cpp
+std::memcpy(mapped, sourceData, size);
 ```
 
-Afterward, unmap it:
+After writing, the mapping can be released:
 
-```
+```cpp
 vkUnmapMemory(device, memory);
 ```
 
-For some memory types, the GPU can access the same allocation directly.
+Mapping is a CPU-side operation. It does not submit GPU work and does not by
+itself establish all synchronization required for later GPU access.
 
-A common high-performance pattern instead uses a CPU-visible staging buffer,
-then copies the data into device-local memory using a GPU transfer operation.
+## Host coherence
 
-## Device-local memory
+HOST_COHERENT affects how host writes become visible to the device.
 
-GPU-local memory is generally preferable for resources that the GPU accesses
-frequently.
+With coherent memory, the basic mapped-memory case does not require an
+explicit flush after writing.
 
-A typical upload path therefore looks like:
+Without coherence, the application may need to flush written ranges:
 
-```
-CPU data
-   |
-   v
-staging buffer
-   |
-   v
-GPU copy
-   |
-   v
-device-local buffer
+```cpp
+vkFlushMappedMemoryRanges(
+    device,
+    1,
+    &range
+);
 ```
 
-The staging buffer is temporary. The final resource lives in memory optimized
-for GPU access.
+The important idea is that a valid CPU pointer and GPU visibility are separate
+concepts.
 
-This pattern is common for vertex buffers, index buffers, and textures.
+Memory visibility is one part of synchronization; execution ordering is
+another.
 
-## Images have another concern
+## Staging
 
-Images have layouts that describe how the GPU intends to use them.
+A common upload architecture separates CPU-friendly memory from GPU-friendly
+memory.
 
-An image might transition from an undefined layout into a transfer destination,
-then into a shader-readable layout.
-
-Conceptually:
-
-```
-undefined
-    |
-    v
-transfer destination
-    |
-    v
-shader readable
+```text
+CPU
+ |
+ v
+host-visible staging buffer
+ |
+ | GPU copy
+ v
+device-local vertex buffer
 ```
 
-These transitions are recorded as GPU commands and are part of Vulkan's
-explicit resource management model.
+The CPU writes the staging buffer because it can be mapped. A GPU command then
+copies its contents into the final device-local buffer.
 
-Synchronization and image layout transitions are closely related because the
-GPU must know when a resource changes from one usage to another.
+This allows the final resource to remain in memory optimized for GPU access
+without requiring the CPU to map it.
 
-## The resource model
+## Buffer copies
 
-The important distinction is:
+The copy is recorded into a command buffer.
 
+```cpp
+VkBufferCopy region{
+    0,
+    0,
+    size
+};
+
+vkCmdCopyBuffer(
+    commandBuffer,
+    stagingBuffer,
+    vertexBuffer,
+    1,
+    &region
+);
 ```
-VkBuffer / VkImage
-    = resource description
 
-VkDeviceMemory
-    = memory allocation
+This does not immediately copy the bytes from the CPU's point of view. The
+CPU records a GPU command, submits it, and the queue eventually executes it.
 
-binding
-    = relationship between them
+The staging buffer must therefore remain alive until the GPU has finished
+reading it.
+
+## Lifetime
+
+Vulkan does not automatically determine when a resource is no longer in use.
+
+A typical resource lifetime is:
+
+```text
+create -> bind -> record -> submit -> wait -> destroy
 ```
 
-This gives the application explicit control over where resources live and how
-they are accessed.
+For example, a fence can tell the CPU that submitted work has completed:
 
-Later lessons will use these resources as vertex data, shader inputs, and
-images rendered by the graphics pipeline.
+```cpp
+vkWaitForFences(
+    device,
+    1,
+    &fence,
+    VK_TRUE,
+    UINT64_MAX
+);
+```
+
+Only after the relevant GPU work has completed can the application safely
+reclaim resources that those commands referenced.
+
+## Image views
+
+An image is often accessed through an image view. The view describes how an
+image or one of its subresources should be interpreted.
+
+```cpp
+VkImageViewCreateInfo viewInfo{
+    VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+    nullptr,
+    0,
+    image,
+    VK_IMAGE_VIEW_TYPE_2D,
+    format,
+    {},
+    {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+};
+```
+
+The view does not contain another copy of the image. It references the image
+and describes the portion and interpretation used by later operations.
+
+The relationship is:
+
+```text
+image -> image view -> descriptor or rendering operation
+```
+
+Textures and render targets will make this relationship much more important.
+
+## Memory is not resource state
+
+It is useful to keep several concepts separate.
+
+Memory answers where the resource's storage comes from. Resource usage flags
+describe what operations the resource was created to support. Synchronization
+and image layouts describe how and when those operations may access it.
+
+Therefore, valid memory does not automatically mean valid GPU access.
+
+```text
+memory
+  +
+resource usage
+  +
+resource state
+  +
+synchronization
+  =
+valid GPU access
+```
+
+This separation is one of the central ideas behind Vulkan's explicit design.
+
+## The complete model
+
+A buffer or image starts as a resource description. Its requirements constrain
+the possible memory types. The application chooses a suitable type, allocates
+device memory, and binds the resource to an aligned offset.
+
+The resource can then participate in command execution and synchronization.
+After the GPU has finished using it, the application can destroy the resource
+and eventually free its allocation.
+
+```text
+create
+  -> requirements
+  -> memory type
+  -> allocate
+  -> bind
+  -> use
+  -> synchronize
+  -> destroy
+  -> free
+```
+
+This model is the foundation for vertex buffers, index buffers, uniform
+buffers, textures, and render targets.
 
 ## Next step
 
 Now type the code version of this lesson.
+
+```
+```
 

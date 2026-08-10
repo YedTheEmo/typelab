@@ -1,177 +1,277 @@
 # Vulkan overview - concepts
 
-Vulkan is a graphics and compute API designed to give an application explicit
-control over work submitted to a GPU.
+Vulkan is a low-level graphics and compute API built around explicit control over GPU work. The important idea is not that Vulkan has many structures. The important idea is that the application constructs an execution system and then gives the GPU explicitly prepared work.
 
-Older graphics APIs often hide much of the work performed by the driver. Vulkan
-moves more of that responsibility into the application. This makes Vulkan more
-verbose, but it also makes the cost and ordering of GPU work much more visible.
+A useful first model is:
 
-The important idea is that Vulkan is not a collection of functions for drawing
-things. It is a system for describing work, recording that work, and submitting
-it to a GPU.
-
-## The GPU is a separate processor
-
-A modern GPU is not simply another set of CPU instructions. It is a separate
-processor with its own execution resources and memory.
-
-Your application runs primarily on the CPU. It creates Vulkan objects and
-prepares commands. The GPU eventually executes those commands.
-
-The driver sits between your application and the hardware:
-
+```text
+application -> Vulkan objects -> recorded commands -> queue -> GPU
 ```
-application
+
+The objects describe what the application has available. Command buffers describe work that can be executed. Queues are where that work is submitted. The GPU executes the submitted commands asynchronously with the CPU.
+
+## Vulkan starts with an instance
+
+A Vulkan application normally begins by creating a `VkInstance`. The instance establishes the application's connection to the Vulkan implementation and provides the starting point for discovering physical devices.
+
+```cpp
+VkInstanceCreateInfo createInfo{};
+createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+```
+
+The structure is configuration data for the creation call. Vulkan uses many structures this way: the structure describes what should be created, and the API call creates the object represented by a handle.
+
+The instance is therefore not the GPU and it is not a command queue. It is the root context through which the application begins interacting with Vulkan.
+
+## Physical devices describe available GPUs
+
+Once an instance exists, the application can enumerate `VkPhysicalDevice` handles. A physical device represents hardware exposed by the Vulkan implementation.
+
+The application can inspect its properties and capabilities before choosing it. This is where decisions such as device preference, supported Vulkan features, queue families, memory types, and limits begin.
+
+```cpp
+std::vector<VkPhysicalDevice> physicalDevices(count);
+vkEnumeratePhysicalDevices(instance, &count, physicalDevices.data());
+```
+
+The important distinction is that enumeration is discovery. Nothing about this step means that the application has created its usable device interface yet.
+
+A machine may expose several physical devices. Vulkan gives the application enough information to choose one instead of silently making that decision on its behalf.
+
+## The logical device is the application interface
+
+After choosing a physical device, the application creates a `VkDevice`. The logical device is the application's usable interface to that selected GPU.
+
+This creates an important relationship:
+
+```text
+VkInstance
     |
     v
-Vulkan API
+VkPhysicalDevice
     |
     v
-Vulkan driver
-    |
-    v
-GPU
+VkDevice
 ```
 
-Vulkan standardizes the interface between the application and the driver. The
-driver translates Vulkan operations into work appropriate for the hardware.
+The physical device answers what hardware can do. The logical device represents what the application has requested to use from that hardware.
 
-## Vulkan objects describe state
+Device creation can request queues and enable supported features. It is therefore both a creation step and a declaration of which parts of the physical device the application intends to use.
 
-Vulkan represents important pieces of the rendering system as explicit objects.
-An object is usually represented by a handle that refers to state managed by
-Vulkan.
+## Queue families describe execution capability
 
-For example, an instance is represented by a VkInstance handle:
+A GPU does not expose one universal queue through which every operation must pass. A physical device exposes queue families, and each family advertises supported operations through queue flags.
 
-```
-VkInstance instance;
-```
+For example, a family can advertise graphics support with `VK_QUEUE_GRAPHICS_BIT`.
 
-The handle itself is not the Vulkan instance's data. It is a reference that
-your application uses when interacting with that object.
-
-Other lessons will introduce the objects in detail. For now, the important idea
-is that Vulkan makes the major pieces of the GPU interface explicit.
-
-## Work is recorded before it is submitted
-
-Vulkan separates describing work from submitting that work.
-
-A command buffer can contain commands such as drawing, copying an image, or
-changing GPU state:
-
-```
-vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+```cpp
+if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+    graphicsFamily = index;
+}
 ```
 
-This call does not mean that the GPU immediately executes the draw. It records
-a command into the command buffer.
+The flag describes capability. It does not execute a graphics command and it does not mean that a queue is currently busy.
 
-The application can later submit that command buffer to a queue:
+A queue family can expose graphics, compute, transfer, or combinations of those capabilities. A real renderer may select several families when that provides a useful execution arrangement.
 
+For the first mental model, the important chain is:
+
+```text
+physical device -> queue family -> logical device -> queue
 ```
+
+The application discovers the family first, requests an appropriate queue during device creation, and then retrieves the resulting `VkQueue` handle.
+
+## Queues execute submitted work
+
+A `VkQueue` is a submission destination. The CPU prepares work and submits it to a queue; the GPU can then execute that work.
+
+This is different from calling a function that immediately performs the operation on the CPU. A submission is a request to place previously prepared GPU work into an execution stream.
+
+```cpp
 vkQueueSubmit(queue, 1, &submitInfo, fence);
 ```
 
-This separation is one of Vulkan's central ideas.
+The submission call connects the application's prepared command buffers to a queue. It does not mean that every GPU instruction has completed when the function returns.
 
-The CPU prepares work. The application records that work into command buffers.
-A queue then receives those command buffers for execution by the GPU.
+This distinction is fundamental because CPU and GPU execution overlap. The CPU can continue preparing later work while earlier work is executing on the GPU, provided synchronization rules are respected.
 
-## Queues represent execution
+## Command buffers record work
 
-A Vulkan device exposes one or more queues. Different queues can support
-different kinds of work, such as graphics, compute, or transfer operations.
+Vulkan normally does not issue rendering work directly from the application into the GPU one operation at a time. Commands are recorded into `VkCommandBuffer` objects and later submitted to a queue.
 
-Conceptually, a queue is a submission point for GPU work:
+A simplified recording sequence is:
 
-```
-command buffers
-      |
-      v
-    queue
-      |
-      v
-     GPU
+```cpp
+vkBeginCommandBuffer(commandBuffer, &beginInfo);
+vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+vkEndCommandBuffer(commandBuffer);
 ```
 
-The application does not simply call a drawing function and wait for the GPU
-to finish it. Instead, it builds work and submits that work to a queue.
+The draw call here records a command. It does not mean that the GPU has already rasterized three vertices.
 
-This makes synchronization important. The application must explicitly describe
-when GPU operations may begin and which operations must wait for others.
+The stages are separate:
 
-## A frame is a chain of work
-
-Rendering one frame is not one operation. It is a sequence of operations.
-
-A simplified frame looks like this:
-
+```text
+record -> submit -> execute
 ```
+
+Recording lets the application construct a sequence of GPU operations before execution. Submission then makes that recorded work available to a queue.
+
+This separation is one of the reasons Vulkan can expose command organization more explicitly than a higher-level API. The application can decide when work is built, how it is grouped, and when it is submitted.
+
+## Command pools provide allocation context
+
+Command buffers are normally allocated from a `VkCommandPool`. The pool belongs to a logical device and is associated with a queue family.
+
+```cpp
+VkCommandPoolCreateInfo poolInfo{};
+poolInfo.queueFamilyIndex = graphicsFamily;
+```
+
+The command pool is not itself the recorded work. It provides the allocation and management context for command buffers.
+
+The relationship is:
+
+```text
+logical device
+    |
+    v
+command pool
+    |
+    +-> command buffer
+    +-> command buffer
+```
+
+This distinction matters because Vulkan contains many objects whose roles are deliberately narrow. A pool manages command-buffer allocation; a command buffer records commands; a queue accepts submissions.
+
+## Resources are separate from commands
+
+GPU commands need data to operate on. Vulkan represents that data with resource objects such as `VkBuffer` and `VkImage`.
+
+A buffer can contain vertex data, indices, uniform data, storage data, or transfer data. An image can represent a texture, a color target, a depth image, or another image resource.
+
+```cpp
+VkBuffer buffer = VK_NULL_HANDLE;
+VkImage image = VK_NULL_HANDLE;
+```
+
+The handles represent resources, not the commands that use them. A command buffer can contain an operation that reads from a buffer, writes to an image, copies between resources, or binds a resource for later shader access.
+
+This separation allows resources to have lifetimes independent of individual command sequences. A texture can be used by many command buffers, and a buffer can participate in many submissions over its lifetime.
+
+## Memory backs resources
+
+A resource object describes how a resource is used, but storage is handled through Vulkan's memory system. The application can allocate device memory and bind it to resources according to the device's memory properties.
+
+A simplified model is:
+
+```text
+resource -> bound memory -> physical storage
+```
+
+This is one of Vulkan's most important examples of explicit control. A higher-level API may hide where a resource is placed. Vulkan exposes enough information for the application or an allocator to make informed decisions about memory.
+
+The physical device reports memory types and heaps. Their properties affect how the CPU and GPU can access the memory and therefore influence how resources should be allocated.
+
+The exact allocation strategy is more complicated than the diagram suggests, but the conceptual division is enough for now: the resource describes the usable object, while memory provides its backing storage.
+
+## Pipelines describe execution state
+
+A graphics command also needs to know how the GPU should interpret and process the work. Vulkan represents much of this configuration with pipeline objects.
+
+A graphics pipeline includes shader stages and fixed-function state such as vertex input, rasterization, depth and stencil behavior, multisampling, and color blending.
+
+```cpp
+vkCmdBindPipeline(
+    commandBuffer,
+    VK_PIPELINE_BIND_POINT_GRAPHICS,
+    pipeline
+);
+```
+
+Binding the pipeline records the state that subsequent graphics commands use. The pipeline itself does not draw anything. A later draw command uses the bound state to describe how the GPU should process its vertices and fragments.
+
+A useful distinction is:
+
+```text
+pipeline -> how graphics work is configured
+command  -> what operation should be performed
+resource -> what data the operation uses
+```
+
+These three ideas will repeatedly appear together in later lessons.
+
+## CPU and GPU work asynchronously
+
+Vulkan's explicit model becomes especially important when considering time. The CPU records and submits work, while the GPU executes that work later and potentially in parallel with the CPU.
+
+Suppose the CPU submits a command that reads a buffer. If the CPU immediately overwrites that buffer for another frame, the two operations may conflict because the GPU may still be reading the original contents.
+
+The application therefore needs synchronization to establish ordering and availability.
+
+```text
+CPU: record -> submit -> continue
+                 |
+                 v
+GPU:             execute -> finish
+```
+
+A `VkFence` can allow the CPU to determine that a submitted operation has completed. Semaphores and other synchronization mechanisms can establish dependencies between GPU operations and submissions.
+
+The names of these mechanisms are less important at this stage than the reason they exist: submitting work and completing work are different events.
+
+## A frame is a chain, not a draw call
+
+A real Vulkan frame combines the systems introduced above. A simplified windowed frame looks like this:
+
+```text
 acquire image
-    |
-    v
-record rendering commands
-    |
-    v
-submit commands to graphics queue
-    |
-    v
-GPU executes rendering
-    |
-    v
-present rendered image
+    -> record commands
+    -> submit to queue
+    -> GPU executes
+    -> present image
 ```
 
-The swapchain provides images that can be presented to the window. The
-application acquires an available image, renders into it, and eventually asks
-the presentation system to display it.
+The swapchain supplies images that can eventually be presented to a window. The application acquires an available image, records commands that render into it, submits those commands, waits on the required dependencies, and then presents the completed image.
 
-Later lessons will turn each part of this sequence into actual Vulkan code.
+Each arrow represents a relationship that Vulkan makes explicit. The image must be available before rendering uses it. Rendering must complete before presentation uses its result. A resource must not be modified while earlier GPU work still depends on it.
 
-## Why Vulkan is verbose
+Later lessons will separate these responsibilities into swapchain management, command recording, synchronization, resources, and the frame loop.
 
-Vulkan asks the application to make decisions that other APIs may make
-implicitly.
+## Why Vulkan has so many objects
 
-The application chooses devices, queue families, formats, synchronization
-objects, memory types, pipeline state, and many other details.
+Vulkan's large API can initially feel like a collection of arbitrary structures. It becomes more coherent when each object is viewed as an explicit representation of one part of the execution model.
 
-That verbosity is intentional.
+The instance establishes the Vulkan environment. A physical device represents discoverable hardware. A logical device represents the application's connection to selected hardware. Queue families describe capabilities, queues accept submissions, command pools manage command-buffer allocation, command buffers record work, resources hold data, pipelines describe graphics state, and synchronization objects express dependencies.
 
-It allows the application to know more about what the GPU is being asked to do.
-It also reduces the amount of hidden work that a driver needs to perform at
-runtime.
+The objects are therefore not the lesson's destination. They are vocabulary for describing a GPU execution system.
 
-The tradeoff is that Vulkan requires a much stronger understanding of how the
-CPU, driver, GPU, memory, commands, and synchronization interact.
+A useful question when encountering a new Vulkan object is: what responsibility or relationship does this object make explicit?
 
-## The mental model
+That question is more useful than memorizing structure names in isolation.
 
-The most useful starting model is:
+## The complete mental model
 
-```
-create objects
-    |
-    v
-prepare resources
-    |
-    v
-record commands
-    |
-    v
-submit to queues
-    |
-    v
-synchronize execution
-    |
-    v
-present the result
+The entire overview can be compressed into one chain:
+
+```text
+instance
+  -> physical device
+  -> logical device
+  -> queue
+  -> command pool
+  -> command buffer
+  -> record
+  -> submit
+  -> GPU execution
 ```
 
-Vulkan is fundamentally about controlling this flow explicitly.
+Resources and pipelines become inputs to the recorded work, while synchronization controls when dependent work is allowed to proceed.
+
+The application is responsible for constructing these pieces and maintaining their lifetimes. The Vulkan implementation remains responsible for translating the API operations to the underlying GPU, but the application exposes substantially more of the decisions that shape execution.
+
+That is the central Vulkan tradeoff: more responsibility in exchange for more explicit control over GPU work, resources, scheduling, and synchronization.
 
 ## Next step
 

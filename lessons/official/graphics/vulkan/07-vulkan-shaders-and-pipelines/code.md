@@ -1,319 +1,474 @@
 # Vulkan shaders and pipelines - typing
 
-This lesson types the shader path: load compiled SPIR-V, build modules,
-describe stages, create a pipeline layout, and sketch a graphics pipeline.
+This lesson types the graphics pipeline: shader stages, vertex input,
+rasterization state, pipeline layout, and graphics pipeline creation.
 
-## Load SPIR-V
+## Describe shader stages
 
-Vulkan expects shader code already compiled to SPIR-V bytes.
+Connect compiled shader modules to their roles in the graphics pipeline.
 
-```
-// file reading for shader files
-#include <fstream>
-// byte storage for shader code
-#include <vector>
+```cpp
+    // describe the vertex shader stage
+    VkPipelineShaderStageCreateInfo vertexStage{
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        nullptr,
+        0,
+        VK_SHADER_STAGE_VERTEX_BIT,
+        vertexModule,
+        "main",
+        nullptr
+    };
 
-// helper that reads a whole file into a byte vector
-std::vector<char> readFile(
-    const std::string& filename)
-{
-    // open the file positioned at its end
-    std::ifstream file(
-        filename,
-        std::ios::ate |
-        std::ios::binary);
+    // describe the fragment shader stage
+    VkPipelineShaderStageCreateInfo fragmentStage{
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        nullptr,
+        0,
+        VK_SHADER_STAGE_FRAGMENT_BIT,
+        fragmentModule,
+        "main",
+        nullptr
+    };
 
-    // use the file size to size the buffer
-    size_t size =
-        static_cast<size_t>(file.tellg());
-
-    // allocate the byte buffer
-    std::vector<char> buffer(size);
-
-    // rewind to the start of the file
-    file.seekg(0);
-    // read every byte into the buffer
-    file.read(buffer.data(), size);
-
-    // return the loaded bytes
-    return buffer;
-}
+    // collect both shader stages
+    VkPipelineShaderStageCreateInfo shaderStages[]{
+        vertexStage,
+        fragmentStage
+    };
 ```
 
-## Create a shader module
+## Describe vertex input
 
-Each shader file becomes a module of SPIR-V code.
+Tell Vulkan how vertex-buffer bytes map to vertex shader inputs.
 
-```
-// load the compiled vertex shader
-std::vector<char> vertexCode =
-    readFile("triangle.vert.spv");
+```cpp
+    // describe the distance between vertices
+    VkVertexInputBindingDescription binding{
+        0,
+        sizeof(Vertex),
+        VK_VERTEX_INPUT_RATE_VERTEX
+    };
 
-// the create-info struct for the module
-VkShaderModuleCreateInfo moduleInfo{};
-// identify the module create-info type
-moduleInfo.sType =
-    VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-// byte size of the shader code
-moduleInfo.codeSize = vertexCode.size();
-// reinterpret the bytes as SPIR-V words
-moduleInfo.pCode =
-    reinterpret_cast<const uint32_t*>(
-        vertexCode.data());
+    // describe the position attribute
+    VkVertexInputAttributeDescription attribute{
+        0,
+        0,
+        VK_FORMAT_R32G32B32_SFLOAT,
+        offsetof(Vertex, position)
+    };
 
-// handle that Vulkan will fill in
-VkShaderModule vertexModule =
-    VK_NULL_HANDLE;
-
-// create the vertex module
-VkResult result = vkCreateShaderModule(
-    device,
-    &moduleInfo,
-    nullptr,
-    &vertexModule);
-
-// bail out if module creation failed
-if (result != VK_SUCCESS)
-    return 1;
-
-// load the compiled fragment shader
-std::vector<char> fragmentCode =
-    readFile("triangle.frag.spv");
-
-// reuse the module info for the fragment code
-moduleInfo.codeSize = fragmentCode.size();
-moduleInfo.pCode =
-    reinterpret_cast<const uint32_t*>(
-        fragmentCode.data());
-
-// handle that Vulkan will fill in
-VkShaderModule fragmentModule =
-    VK_NULL_HANDLE;
-
-// create the fragment module
-result = vkCreateShaderModule(
-    device,
-    &moduleInfo,
-    nullptr,
-    &fragmentModule);
-
-// bail out if module creation failed
-if (result != VK_SUCCESS)
-    return 1;
+    // describe the vertex input state
+    VkPipelineVertexInputStateCreateInfo vertexInput{
+        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        nullptr,
+        0,
+        1,
+        &binding,
+        1,
+        &attribute
+    };
 ```
 
-## Describe the shader stages
+## Choose primitive assembly
 
-Each module is wired to a stage of the pipeline.
+Tell Vulkan how the incoming vertices form primitives.
 
+```cpp
+    // describe independent triangles
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        nullptr,
+        0,
+        VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        VK_FALSE
+    };
 ```
-// describes the vertex shader stage
-VkPipelineShaderStageCreateInfo vertexStage{};
-// identify the stage create-info type
-vertexStage.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-// this stage runs on every vertex
-vertexStage.stage =
-    VK_SHADER_STAGE_VERTEX_BIT;
-// the module holding the code
-vertexStage.module = vertexModule;
-// entry point name inside the shader
-vertexStage.pName = "main";
 
-// describes the fragment shader stage
-VkPipelineShaderStageCreateInfo fragmentStage{};
-// identify the stage create-info type
-fragmentStage.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-// this stage runs on every fragment
-fragmentStage.stage =
-    VK_SHADER_STAGE_FRAGMENT_BIT;
-// the module holding the code
-fragmentStage.module = fragmentModule;
-// entry point name inside the shader
-fragmentStage.pName = "main";
+## Configure viewport state
 
-// both stages together
-VkPipelineShaderStageCreateInfo stages[] = {
-    vertexStage,
-    fragmentStage
-};
+Describe the viewport and scissor used by the pipeline.
+
+```cpp
+    // describe the framebuffer viewport
+    VkViewport viewport{
+        0.0f,
+        0.0f,
+        width,
+        height,
+        0.0f,
+        1.0f
+    };
+
+    // describe the framebuffer scissor
+    VkRect2D scissor{
+        {0, 0},
+        {width, height}
+    };
+
+    // describe viewport and scissor state
+    VkPipelineViewportStateCreateInfo viewportState{
+        VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        nullptr,
+        0,
+        1,
+        &viewport,
+        1,
+        &scissor
+    };
+```
+
+## Configure rasterization
+
+Configure filled polygons, back-face culling, and winding order.
+
+```cpp
+    // describe rasterization behavior
+    VkPipelineRasterizationStateCreateInfo rasterizer{
+        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        nullptr,
+        0,
+        VK_FALSE,
+        VK_FALSE,
+        VK_POLYGON_MODE_FILL,
+        VK_CULL_MODE_BACK_BIT,
+        VK_FRONT_FACE_CLOCKWISE,
+        VK_FALSE,
+        0.0f,
+        0.0f,
+        0.0f,
+        1.0f
+    };
+```
+
+## Configure multisampling
+
+Use one sample per pixel for the initial pipeline.
+
+```cpp
+    // describe single-sample rendering
+    VkPipelineMultisampleStateCreateInfo multisampling{
+        VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        nullptr,
+        0,
+        VK_SAMPLE_COUNT_1_BIT,
+        VK_FALSE,
+        1.0f,
+        nullptr,
+        VK_FALSE,
+        VK_FALSE
+    };
+```
+
+## Configure depth state
+
+Leave depth testing disabled until a depth attachment exists.
+
+```cpp
+    // describe disabled depth testing
+    VkPipelineDepthStencilStateCreateInfo depthStencil{
+        VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        nullptr,
+        0,
+        VK_FALSE,
+        VK_FALSE,
+        VK_COMPARE_OP_LESS,
+        VK_FALSE,
+        VK_FALSE,
+        {},
+        {},
+        0.0f,
+        1.0f
+    };
+```
+
+## Configure color output
+
+Describe a single color attachment with replacement rather than blending.
+
+```cpp
+    // describe direct color replacement
+    VkPipelineColorBlendAttachmentState blendAttachment{
+        VK_FALSE,
+        VK_BLEND_FACTOR_ONE,
+        VK_BLEND_FACTOR_ZERO,
+        VK_BLEND_OP_ADD,
+        VK_BLEND_FACTOR_ONE,
+        VK_BLEND_FACTOR_ZERO,
+        VK_BLEND_OP_ADD,
+        VK_COLOR_COMPONENT_R_BIT |
+        VK_COLOR_COMPONENT_G_BIT |
+        VK_COLOR_COMPONENT_B_BIT |
+        VK_COLOR_COMPONENT_A_BIT
+    };
+
+    // describe the color blending state
+    VkPipelineColorBlendStateCreateInfo colorBlending{
+        VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        nullptr,
+        0,
+        VK_FALSE,
+        VK_LOGIC_OP_COPY,
+        1,
+        &blendAttachment,
+        {0.0f, 0.0f, 0.0f, 0.0f}
+    };
 ```
 
 ## Create the pipeline layout
 
-The layout declares the shaders' external resources; this example needs none.
+Create the empty resource interface used by the initial shaders.
 
-```
-// the create-info struct for the layout
-VkPipelineLayoutCreateInfo layoutInfo{};
-// identify the layout create-info type
-layoutInfo.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+```cpp
+    // describe an empty pipeline layout
+    VkPipelineLayoutCreateInfo layoutInfo{
+        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        nullptr,
+        0,
+        0,
+        nullptr,
+        0,
+        nullptr
+    };
 
-// handle that Vulkan will fill in
-VkPipelineLayout pipelineLayout =
-    VK_NULL_HANDLE;
+    // store the pipeline layout
+    VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 
-// create the pipeline layout
-result = vkCreatePipelineLayout(
-    device,
-    &layoutInfo,
-    nullptr,
-    &pipelineLayout);
-
-// bail out if layout creation failed
-if (result != VK_SUCCESS)
-    return 1;
-```
-
-## Describe rasterization
-
-The rasterizer converts primitives into fragments.
-
-```
-// the create-info struct for rasterization
-VkPipelineRasterizationStateCreateInfo rasterizer{};
-// identify the rasterizer create-info type
-rasterizer.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-// do not clamp depth values
-rasterizer.depthClampEnable = VK_FALSE;
-// keep rasterization enabled
-rasterizer.rasterizerDiscardEnable = VK_FALSE;
-// fill every pixel of the triangle
-rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-// raster line width in pixels
-rasterizer.lineWidth = 1.0f;
-// discard back-facing triangles
-rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-// vertices wind clockwise on the front face
-rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    // create the pipeline layout
+    vkCreatePipelineLayout(
+        device,
+        &layoutInfo,
+        nullptr,
+        &pipelineLayout
+    );
 ```
 
-## Describe the pipeline
+## Configure dynamic state
 
-The graphics pipeline create-info ties the pieces together.
+Move viewport and scissor values to command recording.
 
+```cpp
+    // list the state supplied during command recording
+    VkDynamicState dynamicStates[]{
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+
+    // describe the dynamic pipeline state
+    VkPipelineDynamicStateCreateInfo dynamicState{
+        VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        nullptr,
+        0,
+        2,
+        dynamicStates
+    };
 ```
-// the create-info struct for the graphics pipeline
-VkGraphicsPipelineCreateInfo pipelineInfo{};
-// identify the pipeline create-info type
-pipelineInfo.sType =
-    VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-// two shader stages
-pipelineInfo.stageCount = 2;
-// the stage array built above
-pipelineInfo.pStages = stages;
-// the pipeline layout
-pipelineInfo.layout = pipelineLayout;
-// the rasterization state
-pipelineInfo.pRasterizationState =
-    &rasterizer;
+
+## Assemble the graphics pipeline
+
+Combine the shader stages and fixed-function state into one pipeline.
+
+```cpp
+    // describe the complete graphics pipeline
+    VkGraphicsPipelineCreateInfo pipelineInfo{
+        VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        nullptr,
+        0,
+        2,
+        shaderStages,
+        &vertexInput,
+        &inputAssembly,
+        nullptr,
+        &viewportState,
+        &rasterizer,
+        &multisampling,
+        &depthStencil,
+        &colorBlending,
+        &dynamicState,
+        pipelineLayout,
+        renderPass,
+        0,
+        VK_NULL_HANDLE,
+        -1
+    };
+
+    // store the graphics pipeline
+    VkPipeline graphicsPipeline = VK_NULL_HANDLE;
+
+    // create the graphics pipeline
+    vkCreateGraphicsPipelines(
+        device,
+        VK_NULL_HANDLE,
+        1,
+        &pipelineInfo,
+        nullptr,
+        &graphicsPipeline
+    );
 ```
 
 ## Bind the pipeline
 
-A command buffer binds the pipeline before issuing draws.
+Select the graphics pipeline before recording a draw.
 
-```
-// handle that the application already owns
-VkPipeline graphicsPipeline =
-    VK_NULL_HANDLE;
-
-// bind the graphics pipeline to the command buffer
-vkCmdBindPipeline(
-    commandBuffer,
-    VK_PIPELINE_BIND_POINT_GRAPHICS,
-    graphicsPipeline);
-
-// any draw now runs through the bound pipeline
-vkCmdDraw(
-    commandBuffer,
-    3,   // vertex count
-    1,   // instance count
-    0,   // first vertex
-    0);  // first instance
+```cpp
+    // bind the graphics pipeline
+    vkCmdBindPipeline(
+        commandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        graphicsPipeline
+    );
 ```
 
-## Clean up
+## Set dynamic state
 
-Modules can be destroyed after pipeline creation; the layout must outlive it.
+Provide the viewport and scissor values for this command buffer.
 
+```cpp
+    // set the dynamic viewport
+    vkCmdSetViewport(
+        commandBuffer,
+        0,
+        1,
+        &viewport
+    );
+
+    // set the dynamic scissor
+    vkCmdSetScissor(
+        commandBuffer,
+        0,
+        1,
+        &scissor
+    );
 ```
-// destroy the fragment module
-vkDestroyShaderModule(
-    device,
-    fragmentModule,
-    nullptr);
 
-// destroy the vertex module
-vkDestroyShaderModule(
-    device,
-    vertexModule,
-    nullptr);
+## Destroy the pipeline
 
-// destroy the pipeline layout
-vkDestroyPipelineLayout(
-    device,
-    pipelineLayout,
-    nullptr);
+Destroy the pipeline after submitted work can no longer reference it.
 
-// destroy the graphics pipeline itself
-vkDestroyPipeline(
-    device,
-    graphicsPipeline,
-    nullptr);
+```cpp
+    // destroy the graphics pipeline
+    vkDestroyPipeline(
+        device,
+        graphicsPipeline,
+        nullptr
+    );
+
+    // destroy the pipeline layout
+    vkDestroyPipelineLayout(
+        device,
+        pipelineLayout,
+        nullptr
+    );
 ```
 
 ## Now type it again
 
-Type the essential shader-stage setup.
+Re-drill shader stages and vertex input.
 
+```cpp
+    // describe the vertex shader stage
+    VkPipelineShaderStageCreateInfo vertexStage{
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        nullptr,
+        0,
+        VK_SHADER_STAGE_VERTEX_BIT,
+        vertexModule,
+        "main",
+        nullptr
+    };
+
+    // describe the fragment shader stage
+    VkPipelineShaderStageCreateInfo fragmentStage{
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        nullptr,
+        0,
+        VK_SHADER_STAGE_FRAGMENT_BIT,
+        fragmentModule,
+        "main",
+        nullptr
+    };
+
+    // collect both shader stages
+    VkPipelineShaderStageCreateInfo shaderStages[]{
+        vertexStage,
+        fragmentStage
+    };
+
+    // describe the vertex binding
+    VkVertexInputBindingDescription binding{
+        0,
+        sizeof(Vertex),
+        VK_VERTEX_INPUT_RATE_VERTEX
+    };
+
+    // describe the vertex attribute
+    VkVertexInputAttributeDescription attribute{
+        0,
+        0,
+        VK_FORMAT_R32G32B32_SFLOAT,
+        offsetof(Vertex, position)
+    };
+
+    // describe the vertex input state
+    VkPipelineVertexInputStateCreateInfo vertexInput{
+        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        nullptr,
+        0,
+        1,
+        &binding,
+        1,
+        &attribute
+    };
 ```
-// describes the vertex shader stage
-VkPipelineShaderStageCreateInfo vertexStage{};
-// identify the stage create-info type
-vertexStage.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-// this stage runs on every vertex
-vertexStage.stage =
-    VK_SHADER_STAGE_VERTEX_BIT;
-// the module holding the code
-vertexStage.module = vertexModule;
-// entry point name inside the shader
-vertexStage.pName = "main";
 
-// describes the fragment shader stage
-VkPipelineShaderStageCreateInfo fragmentStage{};
-// identify the stage create-info type
-fragmentStage.sType =
-    VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-// this stage runs on every fragment
-fragmentStage.stage =
-    VK_SHADER_STAGE_FRAGMENT_BIT;
-// the module holding the code
-fragmentStage.module = fragmentModule;
-// entry point name inside the shader
-fragmentStage.pName = "main";
-```
+Re-drill the final pipeline assembly and binding.
 
-Then type the pipeline connection.
+```cpp
+    // describe the graphics pipeline
+    VkGraphicsPipelineCreateInfo pipelineInfo{
+        VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        nullptr,
+        0,
+        2,
+        shaderStages,
+        &vertexInput,
+        &inputAssembly,
+        nullptr,
+        &viewportState,
+        &rasterizer,
+        &multisampling,
+        &depthStencil,
+        &colorBlending,
+        &dynamicState,
+        pipelineLayout,
+        renderPass,
+        0,
+        VK_NULL_HANDLE,
+        -1
+    };
 
-```
-// the create-info struct for the graphics pipeline
-VkGraphicsPipelineCreateInfo pipelineInfo{};
-// identify the pipeline create-info type
-pipelineInfo.sType =
-    VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-// two shader stages
-pipelineInfo.stageCount = 2;
-// the stage array built above
-pipelineInfo.pStages = stages;
-// the pipeline layout
-pipelineInfo.layout = pipelineLayout;
+    // store the graphics pipeline
+    VkPipeline graphicsPipeline = VK_NULL_HANDLE;
+
+    // create the graphics pipeline
+    vkCreateGraphicsPipelines(
+        device,
+        VK_NULL_HANDLE,
+        1,
+        &pipelineInfo,
+        nullptr,
+        &graphicsPipeline
+    );
+
+    // bind the graphics pipeline
+    vkCmdBindPipeline(
+        commandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        graphicsPipeline
+    );
 ```
 
 ## Wrap up
 
-The flow: shader source -> SPIR-V -> modules -> stages -> pipeline -> bind -> draw.
+```text
+shader -> stages -> vertex input -> fixed state -> pipeline -> bind -> draw
+```

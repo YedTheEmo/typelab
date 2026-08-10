@@ -1,307 +1,551 @@
+````text
 # Vulkan resources and memory - typing
 
-This lesson types the resource lifecycle: create a buffer, query its memory
-needs, allocate memory, bind it, and fill it from the CPU.
+This lesson types the resource path: create a buffer, query its requirements,
+allocate compatible memory, bind it, upload through staging, and clean up.
 
-## Create a vertex buffer
+## Create the buffer
 
-A vertex buffer is a resource that still needs memory backing.
+Create a buffer whose intended use is vertex input.
 
-```
-// one vertex has two floats
-struct Vertex
-{
-    float x;
-    float y;
-};
+```cpp
+    // describe the vertex buffer
+    VkBufferCreateInfo bufferInfo{
+        VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        nullptr,
+        0,
+        bufferSize,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_SHARING_MODE_EXCLUSIVE,
+        0,
+        nullptr
+    };
 
-// three vertices forming a triangle
-Vertex vertices[] = {
-    {-0.5f, -0.5f},
-    { 0.5f, -0.5f},
-    { 0.0f,  0.5f}
-};
+    // store the vertex buffer handle
+    VkBuffer vertexBuffer = VK_NULL_HANDLE;
 
-// total byte size of the vertex data
-VkDeviceSize bufferSize =
-    sizeof(vertices);
+    // create the vertex buffer
+    vkCreateBuffer(
+        device,
+        &bufferInfo,
+        nullptr,
+        &vertexBuffer
+    );
+````
 
-// the create-info struct for the buffer
-VkBufferCreateInfo bufferInfo{};
-// identify the buffer create-info type
-bufferInfo.sType =
-    VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-// how many bytes the buffer holds
-bufferInfo.size = bufferSize;
-// the buffer will feed vertex data to drawing
-bufferInfo.usage =
-    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-// the buffer is not shared across queue families
-bufferInfo.sharingMode =
-    VK_SHARING_MODE_EXCLUSIVE;
+## Query requirements
 
-// handle that Vulkan will fill in
-VkBuffer vertexBuffer = VK_NULL_HANDLE;
+Ask the device what memory the buffer requires.
 
-// create the buffer resource
-VkResult result = vkCreateBuffer(
-    device,
-    &bufferInfo,
-    nullptr,
-    &vertexBuffer);
+```cpp
+    // store the buffer requirements
+    VkMemoryRequirements memoryRequirements{};
 
-// bail out if buffer creation failed
-if (result != VK_SUCCESS)
-    return 1;
-```
-
-## Query memory requirements
-
-Vulkan reports what memory the buffer needs.
-
-```
-// struct that Vulkan fills with the requirements
-VkMemoryRequirements requirements{};
-
-// ask how much memory the buffer requires
-vkGetBufferMemoryRequirements(
-    device,
-    vertexBuffer,
-    &requirements);
+    // query the buffer requirements
+    vkGetBufferMemoryRequirements(
+        device,
+        vertexBuffer,
+        &memoryRequirements
+    );
 ```
 
 ## Inspect memory types
 
-Pick a memory type that is both compatible and CPU-visible.
+Read the memory types exposed by the physical device.
 
+```cpp
+    // store the physical-device memory properties
+    VkPhysicalDeviceMemoryProperties memoryProperties{};
+
+    // query the available memory types
+    vkGetPhysicalDeviceMemoryProperties(
+        physicalDevice,
+        &memoryProperties
+    );
 ```
-// struct listing every memory type of the device
-VkPhysicalDeviceMemoryProperties memoryProperties{};
 
-// retrieve the memory properties
-vkGetPhysicalDeviceMemoryProperties(
-    physicalDevice,
-    &memoryProperties);
+## Select device-local memory
 
-// index of the memory type we choose
-uint32_t memoryTypeIndex = 0;
+Find a memory type compatible with the buffer and suitable for GPU storage.
 
-// walk the memory types looking for a match
-for (uint32_t i = 0;
-     i < memoryProperties.memoryTypeCount;
-     ++i)
-{
-    // bit i set means this type can back the buffer
-    bool compatible =
-        requirements.memoryTypeBits & (1 << i);
+```cpp
+    // store the selected memory type
+    uint32_t memoryTypeIndex = UINT32_MAX;
 
-    // flags describing this memory type
-    VkMemoryPropertyFlags properties =
-        memoryProperties.memoryTypes[i].propertyFlags;
+    // search every available memory type
+    for (
+        uint32_t i = 0;
+        i < memoryProperties.memoryTypeCount;
+        ++i
+    ) {
+        // read the properties of this memory type
+        VkMemoryPropertyFlags properties =
+            memoryProperties.memoryTypes[i].propertyFlags;
 
-    // memory that the CPU can see directly
-    bool suitable =
-        properties &
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+        // check compatibility and requested properties
+        if (
+            (memoryRequirements.memoryTypeBits & (1u << i)) &&
+            (properties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ==
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+        ) {
+            // store the compatible memory type
+            memoryTypeIndex = i;
 
-    // CPU writes must also be visible without flushing
-    suitable =
-        suitable &&
-        (properties &
-         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    // stop at the first compatible, suitable type
-    if (compatible && suitable)
-    {
-        memoryTypeIndex = i;
-        break;
+            // stop after finding a suitable type
+            break;
+        }
     }
-}
 ```
 
-## Allocate device memory
+## Allocate buffer memory
 
-The allocation exists independently of the buffer.
+Allocate memory using the size and selected type from the requirements.
 
-```
-// the create-info struct for the allocation
-VkMemoryAllocateInfo allocInfo{};
-// identify the allocate-info type
-allocInfo.sType =
-    VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-// number of bytes to allocate
-allocInfo.allocationSize =
-    requirements.size;
-// which memory type to draw from
-allocInfo.memoryTypeIndex =
-    memoryTypeIndex;
+```cpp
+    // describe the buffer allocation
+    VkMemoryAllocateInfo allocateInfo{
+        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        nullptr,
+        memoryRequirements.size,
+        memoryTypeIndex
+    };
 
-// handle that Vulkan will fill in
-VkDeviceMemory vertexMemory = VK_NULL_HANDLE;
+    // store the buffer allocation
+    VkDeviceMemory vertexMemory = VK_NULL_HANDLE;
 
-// allocate the memory
-result = vkAllocateMemory(
-    device,
-    &allocInfo,
-    nullptr,
-    &vertexMemory);
-
-// bail out if the allocation failed
-if (result != VK_SUCCESS)
-    return 1;
+    // allocate the buffer memory
+    vkAllocateMemory(
+        device,
+        &allocateInfo,
+        nullptr,
+        &vertexMemory
+    );
 ```
 
-## Bind the buffer
+## Bind the memory
 
-Binding connects the buffer to its backing allocation.
+Connect the buffer to the allocation at offset zero.
 
-```
-// attach the buffer to the memory at offset zero
-result = vkBindBufferMemory(
-    device,
-    vertexBuffer,
-    vertexMemory,
-    0);
-
-// bail out if the bind failed
-if (result != VK_SUCCESS)
-    return 1;
+```cpp
+    // bind the buffer to its allocation
+    vkBindBufferMemory(
+        device,
+        vertexBuffer,
+        vertexMemory,
+        0
+    );
 ```
 
-## Map the memory
+## Create a staging buffer
 
-Host-visible memory can be mapped into CPU address space.
+Create a transfer source that the CPU can populate.
 
-```
-// pointer that the CPU can write through
-void* mapped = nullptr;
+```cpp
+    // describe the staging buffer
+    VkBufferCreateInfo stagingInfo{
+        VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        nullptr,
+        0,
+        uploadSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_SHARING_MODE_EXCLUSIVE,
+        0,
+        nullptr
+    };
 
-// map the allocation's range into CPU memory
-result = vkMapMemory(
-    device,
-    vertexMemory,
-    0,            // offset
-    bufferSize,   // length
-    0,            // flags
-    &mapped);
+    // store the staging buffer
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
 
-// bail out if the map failed
-if (result != VK_SUCCESS)
-    return 1;
-
-// copy the vertex data into the mapped memory
-std::memcpy(
-    mapped,
-    vertices,
-    static_cast<size_t>(bufferSize));
-
-// release the mapping
-vkUnmapMemory(
-    device,
-    vertexMemory);
+    // create the staging buffer
+    vkCreateBuffer(
+        device,
+        &stagingInfo,
+        nullptr,
+        &stagingBuffer
+    );
 ```
 
-## Use the buffer
+## Query staging requirements
 
-A command buffer binds the buffer before a draw.
+The staging buffer has its own memory requirements.
 
-```
-// vertex data starts at the beginning of the buffer
-VkDeviceSize offset = 0;
+```cpp
+    // store the staging requirements
+    VkMemoryRequirements stagingRequirements{};
 
-// bind the vertex buffer at binding point zero
-vkCmdBindVertexBuffers(
-    commandBuffer,
-    0,             // binding number
-    1,             // one buffer
-    &vertexBuffer,
-    &offset);
-```
-
-## The device-local alternative
-
-The host-visible memory above is convenient for learning. Production renderers
-often copy data into faster device-local memory through a staging buffer.
-
-```
-// the staging pattern in one diagram
-// CPU data -> host-visible staging buffer -> GPU copy -> device-local buffer
+    // query the staging requirements
+    vkGetBufferMemoryRequirements(
+        device,
+        stagingBuffer,
+        &stagingRequirements
+    );
 ```
 
-## Clean up
+## Select host-visible memory
 
-Destroy the buffer before freeing its backing memory.
+Find a compatible memory type that the CPU can map.
 
+```cpp
+    // store the selected staging memory type
+    uint32_t stagingMemoryType = UINT32_MAX;
+
+    // search every available memory type
+    for (
+        uint32_t i = 0;
+        i < memoryProperties.memoryTypeCount;
+        ++i
+    ) {
+        // read the properties of this memory type
+        VkMemoryPropertyFlags properties =
+            memoryProperties.memoryTypes[i].propertyFlags;
+
+        // check compatibility and host visibility
+        if (
+            (stagingRequirements.memoryTypeBits & (1u << i)) &&
+            (properties & (
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+            )) == (
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+            )
+        ) {
+            // store the compatible memory type
+            stagingMemoryType = i;
+
+            // stop after finding a suitable type
+            break;
+        }
+    }
 ```
-// destroy the buffer resource
-vkDestroyBuffer(
-    device,
-    vertexBuffer,
-    nullptr);
 
-// free the memory the buffer used
-vkFreeMemory(
-    device,
-    vertexMemory,
-    nullptr);
+## Allocate staging memory
+
+Allocate memory using the staging requirements.
+
+```cpp
+    // describe the staging allocation
+    VkMemoryAllocateInfo stagingAllocateInfo{
+        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        nullptr,
+        stagingRequirements.size,
+        stagingMemoryType
+    };
+
+    // store the staging allocation
+    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+
+    // allocate staging memory
+    vkAllocateMemory(
+        device,
+        &stagingAllocateInfo,
+        nullptr,
+        &stagingMemory
+    );
+```
+
+## Bind the staging buffer
+
+Connect the staging buffer to its host-visible allocation.
+
+```cpp
+    // bind the staging buffer to its allocation
+    vkBindBufferMemory(
+        device,
+        stagingBuffer,
+        stagingMemory,
+        0
+    );
+```
+
+## Map the staging memory
+
+Map the allocation so the CPU can write the upload data.
+
+```cpp
+    // store the mapped address
+    void* mappedData = nullptr;
+
+    // map the staging allocation
+    vkMapMemory(
+        device,
+        stagingMemory,
+        0,
+        uploadSize,
+        0,
+        &mappedData
+    );
+```
+
+## Write the upload
+
+Copy application data into the mapped staging allocation.
+
+```cpp
+    // copy application data into the staging allocation
+    std::memcpy(
+        mappedData,
+        sourceData,
+        uploadSize
+    );
+```
+
+## Unmap the staging memory
+
+Release the CPU mapping after the write is complete.
+
+```cpp
+    // release the CPU mapping
+    vkUnmapMemory(
+        device,
+        stagingMemory
+    );
+```
+
+## Record the transfer
+
+Describe the bytes that the GPU should copy.
+
+```cpp
+    // describe the buffer copy
+    VkBufferCopy copyRegion{
+        0,
+        0,
+        uploadSize
+    };
+
+    // record the staging-to-device copy
+    vkCmdCopyBuffer(
+        commandBuffer,
+        stagingBuffer,
+        vertexBuffer,
+        1,
+        &copyRegion
+    );
+```
+
+## Wait for completion
+
+Wait until the submitted transfer has finished before destroying staging data.
+
+```cpp
+    // wait for the transfer submission
+    vkWaitForFences(
+        device,
+        1,
+        &uploadFence,
+        VK_TRUE,
+        UINT64_MAX
+    );
+```
+
+## Destroy the staging buffer
+
+The staging buffer can now be destroyed after the GPU has finished using it.
+
+```cpp
+    // destroy the staging buffer
+    vkDestroyBuffer(
+        device,
+        stagingBuffer,
+        nullptr
+    );
+```
+
+## Free staging memory
+
+Release the staging allocation separately from the buffer object.
+
+```cpp
+    // free the staging allocation
+    vkFreeMemory(
+        device,
+        stagingMemory,
+        nullptr
+    );
+```
+
+## Destroy the vertex buffer
+
+Destroy the final buffer when no submitted work can reference it.
+
+```cpp
+    // destroy the vertex buffer
+    vkDestroyBuffer(
+        device,
+        vertexBuffer,
+        nullptr
+    );
+```
+
+## Free vertex memory
+
+Release the allocation backing the vertex buffer.
+
+```cpp
+    // free the vertex allocation
+    vkFreeMemory(
+        device,
+        vertexMemory,
+        nullptr
+    );
 ```
 
 ## Now type it again
 
-Type the core resource creation sequence.
+Re-drill resource creation and requirement discovery.
 
-```
-// the create-info struct for the buffer
-VkBufferCreateInfo bufferInfo{};
-// identify the buffer create-info type
-bufferInfo.sType =
-    VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-// how many bytes the buffer holds
-bufferInfo.size = bufferSize;
-// the buffer will feed vertex data to drawing
-bufferInfo.usage =
-    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-// the buffer is not shared across queue families
-bufferInfo.sharingMode =
-    VK_SHARING_MODE_EXCLUSIVE;
-```
+```cpp
+    // describe the vertex buffer
+    VkBufferCreateInfo bufferInfo{
+        VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        nullptr,
+        0,
+        bufferSize,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_SHARING_MODE_EXCLUSIVE,
+        0,
+        nullptr
+    };
 
-Then query and allocate its memory.
+    // store the vertex buffer
+    VkBuffer vertexBuffer = VK_NULL_HANDLE;
 
-```
-// struct that Vulkan fills with the requirements
-VkMemoryRequirements requirements{};
+    // create the vertex buffer
+    vkCreateBuffer(
+        device,
+        &bufferInfo,
+        nullptr,
+        &vertexBuffer
+    );
 
-// ask how much memory the buffer requires
-vkGetBufferMemoryRequirements(
-    device,
-    vertexBuffer,
-    &requirements);
+    // store the memory requirements
+    VkMemoryRequirements memoryRequirements{};
 
-// the create-info struct for the allocation
-VkMemoryAllocateInfo allocInfo{};
-// identify the allocate-info type
-allocInfo.sType =
-    VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-// number of bytes to allocate
-allocInfo.allocationSize =
-    requirements.size;
-// which memory type to draw from
-allocInfo.memoryTypeIndex =
-    memoryTypeIndex;
+    // query the memory requirements
+    vkGetBufferMemoryRequirements(
+        device,
+        vertexBuffer,
+        &memoryRequirements
+    );
 ```
 
-Finally bind it.
+Re-drill memory-type selection and allocation.
 
+```cpp
+    // store the physical-device memory properties
+    VkPhysicalDeviceMemoryProperties memoryProperties{};
+
+    // query the memory properties
+    vkGetPhysicalDeviceMemoryProperties(
+        physicalDevice,
+        &memoryProperties
+    );
+
+    // store the selected memory type
+    uint32_t memoryTypeIndex = UINT32_MAX;
+
+    // search the memory types
+    for (
+        uint32_t i = 0;
+        i < memoryProperties.memoryTypeCount;
+        ++i
+    ) {
+        // read the memory properties
+        VkMemoryPropertyFlags properties =
+            memoryProperties.memoryTypes[i].propertyFlags;
+
+        // check compatibility and device-local support
+        if (
+            (memoryRequirements.memoryTypeBits & (1u << i)) &&
+            (properties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ==
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+        ) {
+            // store the compatible memory type
+            memoryTypeIndex = i;
+
+            // stop searching
+            break;
+        }
+    }
+
+    // describe the memory allocation
+    VkMemoryAllocateInfo allocateInfo{
+        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        nullptr,
+        memoryRequirements.size,
+        memoryTypeIndex
+    };
+
+    // store the memory allocation
+    VkDeviceMemory vertexMemory = VK_NULL_HANDLE;
+
+    // allocate device memory
+    vkAllocateMemory(
+        device,
+        &allocateInfo,
+        nullptr,
+        &vertexMemory
+    );
+
+    // bind the buffer to its allocation
+    vkBindBufferMemory(
+        device,
+        vertexBuffer,
+        vertexMemory,
+        0
+    );
 ```
-// attach the buffer to the memory at offset zero
-vkBindBufferMemory(
-    device,
-    vertexBuffer,
-    vertexMemory,
-    0);
+
+Re-drill the CPU-to-GPU staging path.
+
+```cpp
+    // map the staging allocation
+    vkMapMemory(
+        device,
+        stagingMemory,
+        0,
+        uploadSize,
+        0,
+        &mappedData
+    );
+
+    // copy application data into mapped memory
+    std::memcpy(
+        mappedData,
+        sourceData,
+        uploadSize
+    );
+
+    // release the CPU mapping
+    vkUnmapMemory(
+        device,
+        stagingMemory
+    );
+
+    // describe the transfer region
+    VkBufferCopy copyRegion{
+        0,
+        0,
+        uploadSize
+    };
+
+    // record the GPU copy
+    vkCmdCopyBuffer(
+        commandBuffer,
+        stagingBuffer,
+        vertexBuffer,
+        1,
+        &copyRegion
+    );
 ```
 
 ## Wrap up
 
-The flow: create resource -> query requirements -> allocate memory -> bind -> use.
+```text
+resource -> requirements -> memory type -> allocate -> bind -> upload -> use
+```
+
+```
+```
+

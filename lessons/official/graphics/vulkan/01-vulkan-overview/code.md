@@ -1,152 +1,251 @@
 # Vulkan overview - typing
 
-This lesson types the Vulkan execution model: the top-level instance, the
-structures that describe it, and the record-then-submit flow of GPU work.
-
-## Start with Vulkan
-
-A Vulkan program includes the Vulkan header, then defines the entry point.
-
-```
-// pull in the Vulkan API types and functions
-#include <vulkan/vulkan.h>
-
-int main()
-{
-    return 0;
-}
-```
-
-## Describe the application
-
-Vulkan describes operations with structures. VkApplicationInfo holds the
-application's identity for the driver.
-
-```
-// zero-initialize the struct so every field starts cleared
-VkApplicationInfo appInfo{};
-// identify which structure type this is
-appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-// display name for the application
-appInfo.pApplicationName = "TypeLab Vulkan";
-// application version in Vulkan's version format
-appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-// engine name that created this application
-appInfo.pEngineName = "TypeLab";
-// engine version in the same format
-appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-// the Vulkan API version this application targets
-appInfo.apiVersion = VK_API_VERSION_1_3;
-```
+This lesson types a compact Vulkan path: create the instance, choose a GPU,
+create a device and queue, record a command buffer, submit it, and clean up.
 
 ## Create the instance
 
-VkInstanceCreateInfo describes how the instance should be built.
+The instance establishes the Vulkan connection.
 
+```cpp
+    // include the Vulkan API
+    #include <vulkan/vulkan.h>
+
+    // include dynamic arrays
+    #include <vector>
+
+    // include exceptions
+    #include <stdexcept>
+
+    // start the program
+    int main() {
+        // describe the application
+        VkApplicationInfo applicationInfo{
+            VK_STRUCTURE_TYPE_APPLICATION_INFO,
+            nullptr,
+            "Typelab",
+            VK_MAKE_VERSION(1, 0, 0),
+            "Typelab",
+            VK_MAKE_VERSION(1, 0, 0),
+            VK_API_VERSION_1_0
+        };
+
+        // describe the instance
+        VkInstanceCreateInfo instanceInfo{
+            VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+            nullptr,
+            0,
+            &applicationInfo,
+            0,
+            nullptr,
+            0,
+            nullptr
+        };
+
+        // store the created instance
+        VkInstance instance = VK_NULL_HANDLE;
+
+        // create the Vulkan instance
+        if (vkCreateInstance(&instanceInfo, nullptr, &instance) != VK_SUCCESS) {
+            // report failure
+            throw std::runtime_error("failed to create instance");
+        }
 ```
-// the create-info struct describes how to build the instance
-VkInstanceCreateInfo createInfo{};
-// identify the instance create-info type
-createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-// point at the application description built above
-createInfo.pApplicationInfo = &appInfo;
 
-// handle that Vulkan will fill in
-VkInstance instance = VK_NULL_HANDLE;
+## Choose a physical device
 
-// create the instance; the result code reports success or failure
-VkResult result =
-    vkCreateInstance(&createInfo, nullptr, &instance);
+The physical device represents available GPU hardware.
+
+```cpp
+        // store the number of physical devices
+        uint32_t deviceCount = 0;
+
+        // query the physical device count
+        vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+
+        // reject a machine without a Vulkan device
+        if (deviceCount == 0) {
+            // report failure
+            throw std::runtime_error("no Vulkan device found");
+        }
+
+        // allocate storage for physical devices
+        std::vector<VkPhysicalDevice> devices(deviceCount);
+
+        // retrieve the devices
+        vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+
+        // choose the first available physical device
+        VkPhysicalDevice physicalDevice = devices[0];
+
+        // use the first queue family for this minimal example
+        uint32_t graphicsFamily = 0;
 ```
 
-## Think in terms of recorded work
+This example chooses family zero; real code must inspect queue properties.
 
-A command buffer records work instead of executing it. The recorded buffer is
-submitted to a queue for the GPU to run later.
+## Create the logical device
 
+The logical device provides the GPU interface.
+
+```cpp
+        // set the requested queue priority
+        float queuePriority = 1.0f;
+
+        // describe the queue requested from the device
+        VkDeviceQueueCreateInfo queueInfo{
+            VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            nullptr,
+            0,
+            graphicsFamily,
+            1,
+            &queuePriority
+        };
+
+        // describe the logical device
+        VkDeviceCreateInfo deviceInfo{
+            VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            nullptr,
+            0,
+            1,
+            &queueInfo,
+            0,
+            nullptr,
+            0,
+            nullptr,
+            nullptr
+        };
+
+        // store the logical device
+        VkDevice device = VK_NULL_HANDLE;
+
+        // create the logical device
+        if (vkCreateDevice(physicalDevice, &deviceInfo, nullptr, &device)
+            != VK_SUCCESS) {
+            // report failure
+            throw std::runtime_error("failed to create device");
+        }
+
+        // store the graphics queue
+        VkQueue graphicsQueue = VK_NULL_HANDLE;
+
+        // retrieve the first queue from the selected family
+        vkGetDeviceQueue(device, graphicsFamily, 0, &graphicsQueue);
 ```
-// record a draw command into the buffer (no GPU work yet)
-vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
-// submit the recorded command buffer to a queue for execution
-vkQueueSubmit(queue, 1, &submitInfo, fence);
+## Record a command buffer
+
+A command buffer records GPU work before submission.
+
+```cpp
+        // describe the command pool
+        VkCommandPoolCreateInfo poolInfo{
+            VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            nullptr,
+            0,
+            graphicsFamily
+        };
+
+        // store the command pool
+        VkCommandPool commandPool = VK_NULL_HANDLE;
+
+        // create the command pool
+        vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool);
+
+        // describe the command buffer allocation
+        VkCommandBufferAllocateInfo allocateInfo{
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            nullptr,
+            commandPool,
+            VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            1
+        };
+
+        // store the command buffer
+        VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+
+        // allocate the command buffer
+        vkAllocateCommandBuffers(device, &allocateInfo, &commandBuffer);
+
+        // describe command recording
+        VkCommandBufferBeginInfo beginInfo{
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
+        };
+
+        // begin recording the command buffer
+        vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+        // finish the empty command buffer
+        vkEndCommandBuffer(commandBuffer);
 ```
 
-## Put the model together
+The buffer is empty because this lesson focuses on execution flow.
 
-The complete program creates and destroys one instance.
+## Submit the command buffer
 
+Submission sends recorded work to the queue.
+
+```cpp
+        // describe the command buffer submission
+        VkSubmitInfo submitInfo{
+            VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            nullptr,
+            0,
+            nullptr,
+            nullptr,
+            1,
+            &commandBuffer,
+            0,
+            nullptr
+        };
+
+        // submit the recorded command buffer
+        vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+
+        // wait until this simple submission finishes
+        vkQueueWaitIdle(graphicsQueue);
 ```
-// pull in the Vulkan API types and functions
-#include <vulkan/vulkan.h>
 
-int main()
-{
-    // zero-initialize the struct so every field starts cleared
-    VkApplicationInfo appInfo{};
-    // identify which structure type this is
-    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    // display name for the application
-    appInfo.pApplicationName = "TypeLab Vulkan";
-    // application version in Vulkan's version format
-    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    // engine name that created this application
-    appInfo.pEngineName = "TypeLab";
-    // engine version in the same format
-    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    // the Vulkan API version this application targets
-    appInfo.apiVersion = VK_API_VERSION_1_3;
+## Clean up the objects
 
-    // the create-info struct describes how to build the instance
-    VkInstanceCreateInfo createInfo{};
-    // identify the instance create-info type
-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    // point at the application description built above
-    createInfo.pApplicationInfo = &appInfo;
+Vulkan uses explicit object lifetimes.
 
-    // handle that Vulkan will fill in
-    VkInstance instance = VK_NULL_HANDLE;
+```cpp
+        // destroy the command pool
+        vkDestroyCommandPool(device, commandPool, nullptr);
 
-    // create the instance; the result code reports success or failure
-    VkResult result =
-        vkCreateInstance(&createInfo, nullptr, &instance);
+        // destroy the logical device
+        vkDestroyDevice(device, nullptr);
 
-    // bail out if instance creation failed
-    if (result != VK_SUCCESS)
-        return 1;
+        // destroy the Vulkan instance
+        vkDestroyInstance(instance, nullptr);
 
-    // destroy the instance once the program is done with it
-    vkDestroyInstance(instance, nullptr);
-
-    return 0;
-}
+        // finish the program successfully
+        return 0;
+    }
 ```
 
 ## Now type it again
 
-Type the essential creation sequence again.
+Re-drill the core execution sequence.
 
-```
-// zero-initialize the application description struct
-VkApplicationInfo appInfo{};
-// identify which structure type this is
-appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+```cpp
+    // begin recording
+    vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
-// the create-info struct describes how to build the instance
-VkInstanceCreateInfo createInfo{};
-// identify the instance create-info type
-createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-// point at the application description built above
-createInfo.pApplicationInfo = &appInfo;
+    // finish recording
+    vkEndCommandBuffer(commandBuffer);
 
-// handle that Vulkan will fill in
-VkInstance instance = VK_NULL_HANDLE;
+    // submit recorded work
+    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
 
-// create the instance; the result code reports success or failure
-VkResult result =
-    vkCreateInstance(&createInfo, nullptr, &instance);
+    // wait for completion
+    vkQueueWaitIdle(graphicsQueue);
 ```
 
 ## Wrap up
 
-The flow: application info -> instance info -> instance -> future GPU work.
+```text
+instance -> physical device -> device -> queue -> record -> submit -> GPU
+```
+

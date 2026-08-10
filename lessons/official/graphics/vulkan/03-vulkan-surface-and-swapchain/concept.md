@@ -1,240 +1,473 @@
 # Vulkan surface and swapchain - concepts
 
-Vulkan does not create or manage a window. A window belongs to the operating
-system or to a windowing library such as GLFW.
+A Vulkan device can execute GPU work without knowing anything about a window.
+Presentation is a separate concern. To display rendered images, the application
+must connect Vulkan to a window-system surface and then create a swapchain that
+provides images suitable for presentation.
 
-Vulkan needs a way to connect that external window to its presentation system.
-That connection is represented by a VkSurfaceKHR.
+The important relationship is:
 
-The surface is therefore not the window itself. It is Vulkan's representation
-of a place where rendered images can eventually be presented.
-
-## The window and surface
-
-A windowing library creates the actual window:
-
-```
-GLFWwindow* window = glfwCreateWindow(
-    1280, 720, "Vulkan", nullptr, nullptr);
+```cpp
+window -> surface -> swapchain -> presentable images
 ```
 
-Vulkan then creates a surface associated with that window:
+The surface represents the destination provided by the window system. The
+swapchain manages a collection of images that can be acquired, rendered into,
+and eventually presented.
 
+## The surface is the window boundary
+
+A `VkSurfaceKHR` represents a platform-specific presentation target. It is not
+an image and it is not the swapchain itself. It is the Vulkan representation of
+where images will eventually be presented.
+
+The surface is created using an instance-level extension:
+
+```cpp
+VkSurfaceKHR surface = VK_NULL_HANDLE;
 ```
-VkSurfaceKHR surface;
-```
 
-The exact surface creation mechanism depends on the operating system. GLFW
-hides those platform differences and creates the appropriate Vulkan surface.
+The exact creation function depends on the operating system and windowing
+library. GLFW, SDL, and native platform APIs can create the appropriate Vulkan
+surface for a window.
 
-The relationship is:
+The important architectural boundary is:
 
-```
-operating system
-      |
-      v
-    window
-      |
-      v
+```text
+window system
+     |
+     v
 VkSurfaceKHR
-      |
-      v
+     |
+     v
 Vulkan presentation
 ```
 
-The surface does not contain the rendered image. It describes where Vulkan can
-present images.
+The surface therefore connects two systems without becoming a rendering
+resource itself.
 
-## Why the surface matters
+## Surface support belongs to a queue family
 
-A physical device may support graphics operations without supporting
-presentation to a particular surface.
+A graphics-capable queue is not automatically capable of presenting to every
+surface. Presentation support is checked for a particular physical device,
+queue family, and surface.
 
-This means the application must consider two separate capabilities.
+```cpp
+VkBool32 presentSupport = VK_FALSE;
 
-A queue family may support graphics:
-
-```
-VK_QUEUE_GRAPHICS_BIT
-```
-
-But presentation support is checked against the specific surface.
-
-```
 vkGetPhysicalDeviceSurfaceSupportKHR(
     physicalDevice,
     queueFamily,
     surface,
-    &presentSupported);
+    &presentSupport
+);
 ```
 
-The result tells us whether that queue family can present images to this
+The result answers whether queues from that family can present to the selected
 surface.
 
-This matters because graphics and presentation are related but distinct
-operations.
+This matters because queue families describe capabilities, and presentation
+capability can depend on the surface itself. A renderer may therefore need a
+graphics queue and a presentation queue from the same family or from separate
+families.
 
-## The swapchain
+The earlier device-selection model becomes:
 
-The surface tells Vulkan where an image can be presented. The swapchain manages
-a collection of images that can be presented there.
-
-Conceptually:
-
-```
-swapchain
-   |
-   +-- image 0
-   +-- image 1
-   +-- image 2
+```text
+physical device
+    |
+    +-> graphics queue family
+    |
+    +-> presentation support
 ```
 
-While the GPU renders into one image, another image may be available for
-presentation or preparation.
+For a simple renderer, using one queue family that supports both operations is
+convenient. More complex applications can use separate queues when necessary.
 
-The application acquires an available image:
+## Surface capabilities
 
-```
-vkAcquireNextImageKHR(
-    device,
-    swapchain,
-    timeout,
-    imageAvailable,
-    VK_NULL_HANDLE,
-    &imageIndex);
-```
+Before creating a swapchain, the application asks the surface what it can
+support.
 
-The returned imageIndex identifies which swapchain image the application should
-render into.
-
-## Choosing swapchain properties
-
-A surface exposes capabilities that constrain the swapchain.
-
-The application can query them with:
-
-```
-VkSurfaceCapabilitiesKHR capabilities;
+```cpp
+VkSurfaceCapabilitiesKHR capabilities{};
 
 vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
     physicalDevice,
     surface,
-    &capabilities);
+    &capabilities
+);
 ```
 
-These capabilities include the minimum and maximum number of images, supported
-image dimensions, and transformations.
+The capabilities describe constraints such as the minimum and maximum number
+of swapchain images, the supported image extent, and the transforms that can be
+applied to images.
 
-The surface also exposes supported formats:
+These values are important because the application does not have unrestricted
+choice. A requested swapchain must satisfy the surface's capabilities.
 
+The basic relationship is:
+
+```text
+surface capabilities -> valid swapchain configuration
 ```
+
+The application therefore queries the surface before deciding how its
+swapchain should be configured.
+
+## Surface formats
+
+A swapchain image needs a format. The format determines how the image's
+components are represented.
+
+The application can enumerate the formats supported by the surface:
+
+```cpp
 uint32_t formatCount = 0;
 
 vkGetPhysicalDeviceSurfaceFormatsKHR(
     physicalDevice,
     surface,
     &formatCount,
-    nullptr);
+    nullptr
+);
 ```
 
-A format describes how pixels are represented, including their color format
-and color space.
+The second call retrieves the actual choices:
 
-The application also chooses a present mode.
+```cpp
+std::vector<VkSurfaceFormatKHR> formats(formatCount);
 
-A present mode controls how completed images are handed to the presentation
-system. Common modes include FIFO and MAILBOX.
+vkGetPhysicalDeviceSurfaceFormatsKHR(
+    physicalDevice,
+    surface,
+    &formatCount,
+    formats.data()
+);
+```
 
-FIFO is guaranteed to be available and behaves similarly to a synchronized
-display queue. MAILBOX can provide lower-latency behavior when supported.
+A `VkSurfaceFormatKHR` combines an image format with a color-space choice.
+
+For a normal windowed renderer, the application commonly prefers a standard
+color format such as `VK_FORMAT_B8G8R8A8_SRGB`, but it must verify that the
+chosen format is actually supported.
+
+The format is therefore a negotiated property of the presentation system, not
+simply an arbitrary image format selected by the renderer.
+
+## Present modes
+
+The surface also exposes presentation modes. A present mode controls how
+completed swapchain images are scheduled for presentation.
+
+```cpp
+uint32_t presentModeCount = 0;
+
+vkGetPhysicalDeviceSurfacePresentModesKHR(
+    physicalDevice,
+    surface,
+    &presentModeCount,
+    nullptr
+);
+```
+
+The choices include modes such as FIFO and mailbox. They differ in how they
+handle synchronization with the display and whether newer frames can replace
+older queued frames.
+
+`VK_PRESENT_MODE_FIFO_KHR` is widely available and behaves like a queued,
+display-synchronized presentation mode. `VK_PRESENT_MODE_MAILBOX_KHR` can
+provide lower-latency behavior when supported by the platform.
+
+The important point is that present mode affects the relationship between the
+application's rendering rate and the display's presentation schedule.
+
+## Choosing the swapchain extent
+
+The swapchain extent represents the dimensions of its images.
+
+```cpp
+VkExtent2D extent = capabilities.currentExtent;
+```
+
+Some platforms provide a fixed current extent. Other platforms allow the
+application to choose an extent within the reported minimum and maximum
+bounds.
+
+The selected extent must correspond to the window's drawable size rather than
+being treated as an arbitrary renderer preference.
+
+Window resizing makes this especially important. A swapchain created for one
+window size may no longer be appropriate after the window changes dimensions.
+
+This is why swapchain recreation becomes part of the frame architecture later.
+
+## Choosing the image count
+
+A swapchain contains multiple images so that the application can work with one
+image while other images are being displayed or prepared.
+
+The minimum image count comes from the surface:
+
+```cpp
+uint32_t imageCount = capabilities.minImageCount + 1;
+```
+
+Requesting one more image than the minimum is a common starting point, although
+the implementation may impose a maximum:
+
+```cpp
+if (capabilities.maxImageCount > 0 &&
+    imageCount > capabilities.maxImageCount) {
+    imageCount = capabilities.maxImageCount;
+}
+```
+
+The exact number of images influences how much work can remain in flight.
+The swapchain is therefore not merely a container of duplicate images; it is
+part of the mechanism that allows rendering and presentation to overlap.
 
 ## Creating the swapchain
 
-The chosen properties are placed into VkSwapchainCreateInfoKHR:
+Once the surface properties have been examined, the application constructs a
+`VkSwapchainCreateInfoKHR`.
 
+```cpp
+VkSwapchainCreateInfoKHR swapchainInfo{
+    VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+    nullptr,
+    0,
+    surface,
+    imageCount,
+    format.format,
+    format.colorSpace,
+    extent,
+    1,
+    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+    VK_SHARING_MODE_EXCLUSIVE,
+    0,
+    nullptr,
+    capabilities.currentTransform,
+    VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+    presentMode,
+    VK_TRUE,
+    VK_NULL_HANDLE
+};
 ```
-VkSwapchainCreateInfoKHR info{};
 
-info.sType =
-    VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-info.surface = surface;
-info.minImageCount = imageCount;
-info.imageFormat = surfaceFormat.format;
-info.imageColorSpace = surfaceFormat.colorSpace;
-info.imageExtent = extent;
-info.imageArrayLayers = 1;
-info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-info.presentMode = presentMode;
-info.clipped = VK_TRUE;
-```
+The structure connects the surface, image configuration, usage, sharing mode,
+transform, and presentation behavior into one swapchain request.
 
-The swapchain is then created:
+The image usage tells Vulkan what operations the application intends to perform
+with the swapchain images. A graphics renderer normally needs them as color
+attachments.
 
-```
+The sharing mode describes how queue families access the images. Exclusive
+sharing is appropriate when one queue family owns the images for the relevant
+operations.
+
+## The swapchain owns its images
+
+Creating the swapchain produces a collection of images managed by the
+presentation system.
+
+```cpp
+VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+
 vkCreateSwapchainKHR(
     device,
-    &info,
+    &swapchainInfo,
     nullptr,
-    &swapchain);
+    &swapchain
+);
 ```
 
-The swapchain now owns a collection of presentation images.
+The application can retrieve the swapchain's images:
 
-## Acquiring and presenting
+```cpp
+uint32_t swapchainImageCount = 0;
 
-Rendering starts by acquiring an available swapchain image.
-
-The application records commands that render into that image, then submits
-those commands to a queue.
-
-After rendering completes, the image is presented:
-
-```
-VkPresentInfoKHR presentInfo{};
-
-presentInfo.sType =
-    VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-presentInfo.swapchainCount = 1;
-presentInfo.pSwapchains = &swapchain;
-presentInfo.pImageIndices = &imageIndex;
-
-vkQueuePresentKHR(
-    presentQueue,
-    &presentInfo);
+vkGetSwapchainImagesKHR(
+    device,
+    swapchain,
+    &swapchainImageCount,
+    nullptr
+);
 ```
 
-The simplified frame flow is:
+Then the actual image handles are retrieved:
 
-```
-acquire image
-    |
-    v
-record commands
-    |
-    v
-submit rendering
-    |
-    v
-present image
+```cpp
+std::vector<VkImage> swapchainImages(swapchainImageCount);
+
+vkGetSwapchainImagesKHR(
+    device,
+    swapchain,
+    &swapchainImageCount,
+    swapchainImages.data()
+);
 ```
 
-Synchronization connects these stages so that the image is not presented
-before rendering has finished.
+These are `VkImage` resources, but their lifetime is tied to the swapchain.
+The application does not destroy them individually.
+
+This is different from ordinary images created with `vkCreateImage`, where the
+application controls the image object's lifetime directly.
+
+## Image views describe image interpretation
+
+Rendering generally uses image views rather than directly binding the image
+handle everywhere.
+
+A `VkImageView` describes how an image is interpreted when used by a particular
+operation. It specifies the image type, format interpretation, and subresource
+range.
+
+```cpp
+VkImageViewCreateInfo viewInfo{
+    VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+    nullptr,
+    0,
+    swapchainImages[index],
+    VK_IMAGE_VIEW_TYPE_2D,
+    format.format,
+    {},
+    {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+};
+```
+
+The underlying image is the storage resource. The view provides a particular
+way for Vulkan commands and rendering state to refer to that resource.
+
+The relationship is:
+
+```text
+swapchain image
+      |
+      v
+  image view
+      |
+      v
+rendering operations
+```
+
+This distinction becomes important later when textures and depth images are
+introduced.
+
+## Acquiring a swapchain image
+
+Before rendering into a swapchain image, the application acquires one from the
+swapchain.
+
+```cpp
+uint32_t imageIndex = 0;
+
+vkAcquireNextImageKHR(
+    device,
+    swapchain,
+    UINT64_MAX,
+    imageAvailable,
+    VK_NULL_HANDLE,
+    &imageIndex
+);
+```
+
+The returned index identifies which swapchain image the application can use.
+
+The semaphore in this call is part of synchronization and tells later GPU work
+when the image is available. A complete synchronization strategy belongs to
+the next lessons, so this call should currently be understood as an acquisition
+operation that participates in the larger frame sequence.
+
+The conceptual flow is:
+
+```text
+swapchain -> acquire -> image index -> render -> present
+```
+
+## Presenting an image
+
+After rendering has completed, the application presents the acquired image
+through a queue that supports presentation.
+
+```cpp
+VkPresentInfoKHR presentInfo{
+    VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+    nullptr,
+    1,
+    &renderFinished,
+    1,
+    &swapchain,
+    &imageIndex,
+    nullptr
+};
+```
+
+The presentation request identifies the swapchain and the image index that
+should be displayed.
+
+The queue then receives the presentation request:
+
+```cpp
+vkQueuePresentKHR(presentQueue, &presentInfo);
+```
+
+Presentation is therefore a queue operation, but it is not the same thing as
+rendering. Rendering produces or modifies an image. Presentation transfers the
+completed image into the window-system presentation mechanism.
 
 ## Swapchain recreation
 
-A swapchain depends on the window's size and the surface's capabilities.
+A swapchain is tied to the surface's current conditions. Window resizing,
+surface changes, or certain presentation results can make the existing
+swapchain unsuitable.
 
-When a window is resized, the existing swapchain may no longer match the
-surface. The application then needs to recreate it.
+The renderer must then recreate it.
 
-This is why swapchain creation is normally isolated from the rest of the
-rendering system.
+The simplified lifecycle is:
 
-The swapchain is not the renderer. It is the mechanism that supplies images
-which can move between rendering and presentation.
+```text
+create swapchain
+    -> acquire images
+    -> render
+    -> present
+    -> detect change
+    -> destroy dependent objects
+    -> recreate swapchain
+```
+
+Objects such as swapchain image views and framebuffers or rendering state may
+depend on the swapchain's image format or extent. They therefore often need to
+be recreated alongside the swapchain.
+
+This is one reason the final renderer architecture cannot treat swapchain
+creation as a one-time operation.
+
+## The complete presentation model
+
+The surface and swapchain add a presentation path to the device and queue
+model from the previous lesson:
+
+```text
+instance
+    -> physical device
+    -> logical device
+    -> queue
+    -> surface
+    -> swapchain
+    -> swapchain images
+    -> acquire
+    -> render
+    -> present
+```
+
+The surface establishes where presentation can occur. The swapchain provides
+the images used for that presentation. The queue performs the submission and
+presentation operations.
+
+The next lesson focuses on the command buffers that actually record the work
+performed between image acquisition and presentation.
 
 ## Next step
 
 Now type the code version of this lesson.
-
