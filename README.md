@@ -35,7 +35,7 @@ lessons/
   ext/               your own externally-supplied lessons (git-ignored)
 ```
 
-Each lesson is a folder named with a numeric prefix so the folders sort into course order. Inside the folder, `concept.md` explains the ideas and `code.md` is the program to type. Drop any `.md` file anywhere under `lessons/` and it appears when you browse into its folder.
+Each lesson is a folder named with a numeric prefix so the folders sort into course order. Inside the folder, `concept.md` explains the ideas and `code.md` is the program to type. Drop any `.md` file anywhere under `lessons/` and it appears when you browse into its folder. Pass `-e <ext>` to read a different file type instead (e.g. `-e txt`), or `-e *` to match any file type. Note that Unix shells expand `*` before the program sees it, so quote it there (`-e '*'`); on Windows cmd/PowerShell it is passed literally and needs no quotes.
 
 ### Pinning folders
 
@@ -86,6 +86,7 @@ Options:
 |------|-------------|
 | `-l, --lessons <dir>` | Use a different lessons root (default: `lessons`) |
 | `-n, --lines <num>`   | Max lines shown per screen (default: 50) |
+| `-e, --ext <ext>`     | Lesson file extension (default: `.md`; a leading dot is optional). Use `*` to match any file type |
 | `-a, --audio`         | Beep on mistyped characters |
 | `--legacy`            | Legacy rendering: full-screen clear + redraw on every keypress (no alternate-screen buffer) |
 | `-h, --help`          | Show usage |

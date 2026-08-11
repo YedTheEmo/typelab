@@ -193,7 +193,8 @@ bool matchesQuery(const std::string& rel, const std::string& query) {
     return lowerAscii(rel).find(lowerAscii(query)) != std::string::npos;
 }
 
-std::vector<LessonEntry> scanLessons(const std::string& root) {
+std::vector<LessonEntry> scanLessons(const std::string& root,
+                                     const std::string& lesson_ext) {
     std::vector<LessonEntry> out;
     std::error_code ec;
     fs::path rootp(root);
@@ -204,8 +205,10 @@ std::vector<LessonEntry> scanLessons(const std::string& root) {
     for (; it != end; it.increment(ec)) {
         if (ec) break;
         if (!it->is_regular_file(ec)) continue;
-        std::string ext = lowerAscii(it->path().extension().string());
-        if (ext != ".md") continue;
+        if (lesson_ext != "*") {
+            std::string ext = lowerAscii(it->path().extension().string());
+            if (ext != lesson_ext) continue;
+        }
         std::string rel = fs::relative(it->path(), rootp, ec).generic_string();
         if (ec) continue;
         out.push_back({ rel, it->path().string() });
@@ -219,16 +222,17 @@ std::vector<LessonEntry> scanLessons(const std::string& root) {
 
 // One item shown in a single folder of the picker.
 struct DirEntry {
-    std::string name;       // display name (folders end with '/', files omit .md)
+    std::string name;       // display name (folders end with '/', files omit their extension)
     std::string full_path;  // path for opening a file
     std::string rel_path;   // path relative to lessons root
     bool is_dir;
     bool pinned = false;    // '!' prefix: always sorts first, prefix hidden
 };
 
-// Lists the contents of one directory: folders first, then .md lessons, each sorted.
+// Lists the contents of one directory: folders first, then lessons, each sorted.
 std::vector<DirEntry> listDirectory(const std::string& root,
-                                    const std::string& rel) {
+                                    const std::string& rel,
+                                    const std::string& lesson_ext) {
     std::vector<DirEntry> out;
     std::error_code ec;
     fs::path dir = rel.empty() ? fs::path(root) : fs::path(root) / fs::path(rel);
@@ -249,7 +253,8 @@ std::vector<DirEntry> listDirectory(const std::string& root,
                                         : rel + "/" + it->path().filename().string();
             out.push_back({ name + "/", it->path().string(), child_rel, true, pinned });
         } else if (it->is_regular_file(ec)) {
-            if (lowerAscii(it->path().extension().string()) != ".md") continue;
+            if (lesson_ext != "*" &&
+                lowerAscii(it->path().extension().string()) != lesson_ext) continue;
             std::string rel_path = fs::relative(it->path(), root, ec).generic_string();
             if (ec) continue;
             out.push_back({ it->path().stem().string(), it->path().string(), rel_path, false });
@@ -656,7 +661,8 @@ enum PickResult { PICK_CONTINUE, PICK_QUIT };
 PickResult runFilePicker(const std::string& root,
                          int max_lines_setting,
                          bool audio_enabled,
-                         bool legacy_render) {
+                         bool legacy_render,
+                         const std::string& lesson_ext) {
     std::string query;
     std::string current_rel; // "" = lessons root
     size_t selected = 0;
@@ -664,7 +670,7 @@ PickResult runFilePicker(const std::string& root,
     std::vector<size_t> filtered;
 
     auto refresh = [&]() {
-        entries = listDirectory(root, current_rel);
+        entries = listDirectory(root, current_rel, lesson_ext);
         if (!current_rel.empty()) {
             DirEntry up;
             up.name = "..";
@@ -816,6 +822,7 @@ int main(int argc, char* argv[]) {
     bool audio_enabled = false;
     bool legacy_render = false;
     std::string lessons_root = "lessons";
+    std::string lesson_ext = ".md";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -838,12 +845,21 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: " << arg << " requires a directory argument\n";
                 return 1;
             }
+        } else if (arg == "-e" || arg == "--ext") {
+            if (i + 1 < argc) {
+                std::string ext = argv[++i];
+                if (ext != "*" && !ext.empty() && ext[0] != '.') ext = "." + ext;
+                lesson_ext = lowerAscii(ext);
+            } else {
+                std::cerr << "Error: " << arg << " requires an extension argument\n";
+                return 1;
+            }
         } else if (arg == "-h" || arg == "--help") {
-            std::cerr << "Usage: typelab [-n/--lines <num>] [-a/--audio] [--legacy] [-l/--lessons <dir>]\n";
+            std::cerr << "Usage: typelab [-n/--lines <num>] [-a/--audio] [--legacy] [-l/--lessons <dir>] [-e/--ext <ext|*>]\n";
             return 0;
         } else if (arg[0] == '-') {
             std::cerr << "Unknown option: " << arg << "\n";
-            std::cerr << "Usage: typelab [-n/--lines <num>] [-a/--audio] [--legacy] [-l/--lessons <dir>]\n";
+            std::cerr << "Usage: typelab [-n/--lines <num>] [-a/--audio] [--legacy] [-l/--lessons <dir>] [-e/--ext <ext|*>]\n";
             return 1;
         }
     }
@@ -852,17 +868,18 @@ int main(int argc, char* argv[]) {
 
     PickResult result = PICK_CONTINUE;
     while (result == PICK_CONTINUE) {
-        std::vector<LessonEntry> lessons = scanLessons(lessons_root);
+        std::vector<LessonEntry> lessons = scanLessons(lessons_root, lesson_ext);
         if (lessons.empty()) {
+            std::string ext_label = (lesson_ext == "*") ? "" : (lesson_ext + " ");
             std::cout << CLR_SCR
-                      << DIM << "  no .md lessons found under '" << lessons_root << "'\n"
-                      << "  drop .md files into the lessons/ tree (official/ or ext/) and press enter\n"
+                      << DIM << "  no " << ext_label << "lessons found under '" << lessons_root << "'\n"
+                      << "  drop " << ext_label << "files into the lessons/ tree (official/ or ext/) and press enter\n"
                       << RESET << std::flush;
             int k = readKey();
             if (k == KEY_CTRL_C || k == KEY_CTRL_Q) break;
             continue;
         }
-        result = runFilePicker(lessons_root, max_lines_setting, audio_enabled, legacy_render);
+        result = runFilePicker(lessons_root, max_lines_setting, audio_enabled, legacy_render, lesson_ext);
     }
 
     // In default mode the app runs in the alternate screen buffer: clear it
