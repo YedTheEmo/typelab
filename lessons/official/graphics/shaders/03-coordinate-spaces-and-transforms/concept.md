@@ -1,4 +1,3 @@
-````markdown
 # Coordinate spaces and transforms - concepts
 
 A coordinate is only meaningful relative to the space in which it is
@@ -496,5 +495,5 @@ numbers. They become tools for answering a geometric question:
 ## Next step
 
 Now type the code version of this lesson.
-````
+
 
